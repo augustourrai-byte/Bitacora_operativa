@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Bitácora Operativa v2</title>
+  <title>Bitácora Operativa v3</title>
 
   <script src="https://cdn.tailwindcss.com"></script>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -21,7 +21,13 @@
   <script type="text/babel">
     const { useEffect, useMemo, useState } = React;
 
-    const LS_KEY = "df_bitacora_operativa_v2";
+    const LS_KEY = "bitacora_operativa_v3";
+
+    const TABS = {
+      RESUMEN: "RESUMEN",
+      NUEVO: "NUEVO",
+      HISTORIAL: "HISTORIAL"
+    };
 
     const TIPOS = [
       "Inicio de servicio",
@@ -48,6 +54,10 @@
       "Cerrado"
     ];
 
+    const VALIDACION = ["No", "Sí"];
+    const COBRABLE = ["Sí", "No"];
+    const EDP = ["No", "Sí"];
+
     function readLS() {
       try {
         return JSON.parse(localStorage.getItem(LS_KEY) || "[]");
@@ -64,6 +74,11 @@
       return new Date().toISOString().slice(0, 10);
     }
 
+    function startOfToday() {
+      const now = new Date();
+      return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    }
+
     function formatCLP(value) {
       const n = Number(value || 0);
       return n.toLocaleString("es-CL", {
@@ -73,55 +88,72 @@
       });
     }
 
-    function startOfToday() {
-      const now = new Date();
-      return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    function escHtml(str) {
+      return String(str || "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
     }
 
     function daysDiff(dateStr) {
       if (!dateStr) return null;
-      const target = new Date(dateStr + "T00:00:00");
-      const today = startOfToday();
-      const diffMs = target - today;
-      return Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      const d = new Date(dateStr + "T00:00:00");
+      const t = startOfToday();
+      return Math.floor((d - t) / (1000 * 60 * 60 * 24));
     }
 
-    function isPast(dateStr) {
-      const d = daysDiff(dateStr);
-      return d !== null && d < 0;
+    function getSemaforo(row) {
+      if (row.estado === "Cerrado") {
+        return {
+          label: "Cerrado",
+          dot: "bg-slate-500",
+          badge: "bg-slate-100 text-slate-700"
+        };
+      }
+
+      const attention = getAttentionRule(row);
+
+      if (!attention) {
+        return {
+          label: "Controlado",
+          dot: "bg-green-500",
+          badge: "bg-green-100 text-green-700"
+        };
+      }
+
+      if (attention.bucket === "vencido" || attention.bucket === "riesgo" || attention.bucket === "cobro" || attention.bucket === "validacion") {
+        return {
+          label: "Alto",
+          dot: "bg-red-500",
+          badge: "bg-red-100 text-red-700"
+        };
+      }
+
+      return {
+        label: "Medio",
+        dot: "bg-amber-500",
+        badge: "bg-amber-100 text-amber-700"
+      };
     }
 
-    function isSoon(dateStr) {
-      const d = daysDiff(dateStr);
-      return d !== null && d >= 0 && d <= 3;
-    }
+    function getAttentionRule(row) {
+      const tipo = row.tipo;
+      const estado = row.estado;
+      const validado = row.validado;
+      const cobrable = row.cobrable;
+      const pasadoEDP = row.pasadoEDP;
+      const impacto = row.impacto;
+      const fechaCompromiso = row.fechaCompromiso;
+      const mesCobro = row.mesCobro;
+      const monto = Number(row.montoEstimado || 0);
 
-    function getMonthKey(dateStr) {
-      return (dateStr || "").slice(0, 7);
-    }
-
-    function safeText(v) {
-      return String(v || "").trim();
-    }
-
-    function getAttentionRule(r) {
-      const tipo = r.tipo;
-      const estado = r.estado;
-      const validado = r.validado;
-      const cobrable = r.cobrable;
-      const pasadoEDP = r.pasadoEDP;
-      const impacto = r.impacto;
-      const fechaCompromiso = r.fechaCompromiso;
-      const mesCobro = r.mesCobro;
-      const monto = Number(r.montoEstimado || 0);
+      const diff = daysDiff(fechaCompromiso);
 
       if (cobrable === "Sí" && (estado === "Ejecutado" || estado === "Cerrado") && validado === "Sí" && pasadoEDP !== "Sí") {
         return {
           bucket: "cobro",
-          prioridad: "alta",
-          titulo: "Listo para cobro",
-          mensaje: "Ya está validado y aún no ha sido pasado a EDP.",
-          accion: "Pasar a EDP",
+          titulo: "Para cobrar",
+          mensaje: "Caso listo para pasar a EDP.",
           color: "green"
         };
       }
@@ -129,10 +161,8 @@
       if (estado === "Ejecutado" && validado !== "Sí") {
         return {
           bucket: "validacion",
-          prioridad: "alta",
-          titulo: "Pendiente de validación",
-          mensaje: "El trabajo ya fue ejecutado, pero sigue sin respaldo de validación.",
-          accion: "Marcar validado",
+          titulo: "Sin validar",
+          mensaje: "Está ejecutado, pero aún sin respaldo de validación.",
           color: "amber"
         };
       }
@@ -140,63 +170,53 @@
       if (impacto === "Riesgo" && estado !== "Cerrado") {
         return {
           bucket: "riesgo",
-          prioridad: "alta",
           titulo: "Riesgo abierto",
-          mensaje: "Hay un riesgo operativo/comercial abierto que aún no está cerrado.",
-          accion: "Revisar caso",
+          mensaje: "Existe un riesgo operativo o comercial aún abierto.",
           color: "red"
         };
       }
 
-      if (fechaCompromiso && isPast(fechaCompromiso) && estado !== "Cerrado") {
+      if (fechaCompromiso && diff !== null && diff < 0 && estado !== "Cerrado") {
         return {
           bucket: "vencido",
-          prioridad: "alta",
-          titulo: "Compromiso vencido",
-          mensaje: "La fecha compromiso ya venció y el caso sigue abierto.",
-          accion: "Actualizar estado",
+          titulo: "Vencido",
+          mensaje: "La fecha compromiso ya venció.",
           color: "slate"
+        };
+      }
+
+      if (fechaCompromiso && diff !== null && diff >= 0 && diff <= 3 && estado !== "Cerrado") {
+        return {
+          bucket: "proximo",
+          titulo: "Próximo a vencer",
+          mensaje: "Conviene revisarlo antes del vencimiento.",
+          color: "orange"
         };
       }
 
       if ((tipo === "Contratación" || tipo === "Salida de personal" || tipo === "Cambio operativo") && impacto === "Aumenta costo" && estado !== "Cerrado") {
         return {
           bucket: "costo",
-          prioridad: "media",
-          titulo: "Impacto en costo abierto",
-          mensaje: "Movimiento con impacto en costo aún pendiente de cierre o seguimiento.",
-          accion: "Cerrar seguimiento",
+          titulo: "Impacto en costo",
+          mensaje: "Movimiento con impacto en costo aún abierto.",
           color: "blue"
         };
       }
 
-      if (tipo === "Inicio de servicio" && cobrable === "Sí" && (!mesCobro || monto <= 0)) {
+      if (tipo === "Inicio de servicio" && cobrable === "Sí" && (monto <= 0 || !mesCobro)) {
         return {
           bucket: "comercial",
-          prioridad: "media",
-          titulo: "Inicio sin cierre comercial",
-          mensaje: "El servicio inició, pero aún no tiene cobro correctamente definido.",
-          accion: "Completar cobro",
+          titulo: "Inicio sin cobro",
+          mensaje: "Servicio iniciado sin cierre comercial completo.",
           color: "violet"
-        };
-      }
-
-      if (fechaCompromiso && isSoon(fechaCompromiso) && estado !== "Cerrado") {
-        return {
-          bucket: "proximo",
-          prioridad: "media",
-          titulo: "Próximo a vencer",
-          mensaje: "Este caso vence pronto y conviene revisarlo ahora.",
-          accion: "Revisar antes de vencimiento",
-          color: "orange"
         };
       }
 
       return null;
     }
 
-    function colorMap(color) {
-      const map = {
+    function colorClass(color) {
+      return {
         green: "border-green-200 bg-green-50",
         amber: "border-amber-200 bg-amber-50",
         red: "border-red-200 bg-red-50",
@@ -204,60 +224,24 @@
         blue: "border-blue-200 bg-blue-50",
         violet: "border-violet-200 bg-violet-50",
         orange: "border-orange-200 bg-orange-50"
-      };
-      return map[color] || "border-slate-200 bg-white";
+      }[color] || "border-slate-200 bg-white";
     }
 
-    function badgeMap(color) {
-      const map = {
+    function pillClass(color) {
+      return {
         green: "bg-green-100 text-green-800",
         amber: "bg-amber-100 text-amber-800",
         red: "bg-red-100 text-red-800",
-        slate: "bg-slate-200 text-slate-800",
+        slate: "bg-slate-200 text-slate-700",
         blue: "bg-blue-100 text-blue-800",
         violet: "bg-violet-100 text-violet-800",
         orange: "bg-orange-100 text-orange-800"
-      };
-      return map[color] || "bg-slate-100 text-slate-800";
+      }[color] || "bg-slate-100 text-slate-700";
     }
 
-    function SummaryCard({ title, value, detail, amount, tone, active, onClick }) {
-      const tones = {
-        green: "border-green-200 bg-green-50",
-        amber: "border-amber-200 bg-amber-50",
-        red: "border-red-200 bg-red-50",
-        slate: "border-slate-200 bg-white",
-        blue: "border-blue-200 bg-blue-50",
-        violet: "border-violet-200 bg-violet-50"
-      };
-
-      return (
-        <button
-          type="button"
-          onClick={onClick}
-          className={
-            "w-full rounded-2xl border p-4 text-left shadow-sm transition hover:shadow-md " +
-            tones[tone] +
-            (active ? " ring-2 ring-slate-400" : "")
-          }
-        >
-          <div className="text-sm font-medium text-slate-700">{title}</div>
-          <div className="mt-1 text-3xl font-bold">{value}</div>
-          <div className="mt-2 text-sm text-slate-600">{detail}</div>
-          {amount ? <div className="mt-1 text-sm font-semibold">{amount}</div> : null}
-        </button>
-      );
-    }
-
-    function App() {
-      const [rows, setRows] = useState(() => readLS());
-      const [attentionFilter, setAttentionFilter] = useState("");
-      const [textFilter, setTextFilter] = useState("");
-      const [monthFilter, setMonthFilter] = useState("");
-      const [typeFilter, setTypeFilter] = useState("");
-      const [statusFilter, setStatusFilter] = useState("");
-
-      const [form, setForm] = useState({
+    function defaultForm() {
+      return {
+        id: null,
         fecha: todayISO(),
         tipo: "Servicio adicional",
         empresa: "",
@@ -271,115 +255,88 @@
         cobrable: "Sí",
         pasadoEDP: "No",
         mesCobro: todayISO().slice(0, 7),
-        montoEstimado: ""
-      });
+        montoEstimado: "",
+        evidencia: "",
+        comentarios: ""
+      };
+    }
+
+    function SummaryCard({ title, count, detail, amount, tone, active, onClick }) {
+      return (
+        <button
+          onClick={onClick}
+          type="button"
+          className={
+            "w-full rounded-2xl border p-4 text-left shadow-sm transition hover:shadow-md " +
+            colorClass(tone) +
+            (active ? " ring-2 ring-slate-400" : "")
+          }
+        >
+          <div className="text-sm font-medium text-slate-700">{title}</div>
+          <div className="mt-1 text-3xl font-bold">{count}</div>
+          <div className="mt-2 text-sm text-slate-600">{detail}</div>
+          {amount ? <div className="mt-1 text-sm font-semibold">{amount}</div> : null}
+        </button>
+      );
+    }
+
+    function TabButton({ active, onClick, children }) {
+      return (
+        <button
+          type="button"
+          onClick={onClick}
+          className={
+            "rounded-xl px-4 py-2 text-sm font-medium transition " +
+            (active
+              ? "bg-slate-900 text-white"
+              : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50")
+          }
+        >
+          {children}
+        </button>
+      );
+    }
+
+    function App() {
+      const [tab, setTab] = useState(TABS.RESUMEN);
+      const [rows, setRows] = useState(() => readLS());
+      const [form, setForm] = useState(defaultForm());
+      const [attentionFilter, setAttentionFilter] = useState("");
+      const [textFilter, setTextFilter] = useState("");
+      const [monthFilter, setMonthFilter] = useState("");
+      const [typeFilter, setTypeFilter] = useState("");
+      const [statusFilter, setStatusFilter] = useState("");
+      const [editingId, setEditingId] = useState(null);
 
       useEffect(() => {
         writeLS(rows);
       }, [rows]);
 
-      function resetForm() {
-        setForm({
-          fecha: todayISO(),
-          tipo: "Servicio adicional",
-          empresa: "",
-          area: "",
-          descripcion: "",
-          impacto: "Aumenta ingreso",
-          responsable: "",
-          estado: "Abierto",
-          fechaCompromiso: "",
-          validado: "No",
-          cobrable: "Sí",
-          pasadoEDP: "No",
-          mesCobro: todayISO().slice(0, 7),
-          montoEstimado: ""
-        });
-      }
-
-      function addRow() {
-        if (!safeText(form.descripcion)) {
-          alert("Debes ingresar una descripción.");
-          return;
-        }
-
-        const newRow = {
-          id: Date.now(),
-          fecha: form.fecha || todayISO(),
-          tipo: form.tipo,
-          empresa: safeText(form.empresa),
-          area: safeText(form.area),
-          descripcion: safeText(form.descripcion),
-          impacto: form.impacto,
-          responsable: safeText(form.responsable),
-          estado: form.estado,
-          fechaCompromiso: form.fechaCompromiso || "",
-          validado: form.validado,
-          cobrable: form.cobrable,
-          pasadoEDP: form.pasadoEDP,
-          mesCobro: form.mesCobro || "",
-          montoEstimado: form.montoEstimado === "" ? "" : Number(form.montoEstimado)
-        };
-
-        setRows(prev => [newRow, ...prev]);
-        resetForm();
-      }
-
-      function updateRow(id, field, value) {
-        setRows(prev => prev.map(r => r.id === id ? { ...r, [field]: value } : r));
-      }
-
-      function deleteRow(id) {
-        if (!confirm("¿Eliminar este registro?")) return;
-        setRows(prev => prev.filter(r => r.id !== id));
-      }
-
-      function exportCSV() {
-        const headers = [
-          "ID","Fecha","Tipo","Empresa","Área","Descripción","Impacto","Responsable",
-          "Estado","Fecha compromiso","Validado","Cobrable","Pasado a EDP","Mes cobro","Monto estimado"
-        ];
-
-        const lines = rows.map(r => [
-          r.id, r.fecha, r.tipo, r.empresa, r.area, r.descripcion, r.impacto, r.responsable,
-          r.estado, r.fechaCompromiso, r.validado, r.cobrable, r.pasadoEDP, r.mesCobro, r.montoEstimado
-        ]);
-
-        const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-        const csv = [headers.map(esc).join(";"), ...lines.map(row => row.map(esc).join(";"))].join("\n");
-        const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = "bitacora_operativa_v2.csv";
-        a.click();
-        URL.revokeObjectURL(a.href);
-      }
-
-      function clearAll() {
-        if (!confirm("¿Seguro que quieres borrar toda la bitácora?")) return;
-        setRows([]);
-      }
-
       const enriched = useMemo(() => {
         return rows.map(r => ({
           ...r,
-          attention: getAttentionRule(r)
+          attention: getAttentionRule(r),
+          semaforo: getSemaforo(r)
         }));
       }, [rows]);
 
       const summary = useMemo(() => {
-        const cobro = enriched.filter(r => r.attention?.bucket === "cobro");
-        const validacion = enriched.filter(r => r.attention?.bucket === "validacion");
-        const riesgo = enriched.filter(r => r.attention?.bucket === "riesgo");
-        const vencido = enriched.filter(r => r.attention?.bucket === "vencido");
-        const costo = enriched.filter(r => r.attention?.bucket === "costo");
-        const comercial = enriched.filter(r => r.attention?.bucket === "comercial");
+        const mapBucket = (bucket) => enriched.filter(x => x.attention?.bucket === bucket);
+
+        const cobro = mapBucket("cobro");
+        const validacion = mapBucket("validacion");
+        const riesgo = mapBucket("riesgo");
+        const vencido = mapBucket("vencido");
+        const proximo = mapBucket("proximo");
+        const costo = mapBucket("costo");
+        const comercial = mapBucket("comercial");
 
         return {
           cobro,
           validacion,
           riesgo,
           vencido,
+          proximo,
           costo,
           comercial,
           montoCobro: cobro.reduce((acc, r) => acc + Number(r.montoEstimado || 0), 0)
@@ -393,10 +350,20 @@
           data = data.filter(r => r.attention.bucket === attentionFilter);
         }
 
+        const order = {
+          vencido: 1,
+          riesgo: 2,
+          validacion: 3,
+          cobro: 4,
+          proximo: 5,
+          costo: 6,
+          comercial: 7
+        };
+
         data.sort((a, b) => {
-          const aHigh = a.attention?.prioridad === "alta" ? 1 : 0;
-          const bHigh = b.attention?.prioridad === "alta" ? 1 : 0;
-          if (aHigh !== bHigh) return bHigh - aHigh;
+          const oa = order[a.attention?.bucket] || 99;
+          const ob = order[b.attention?.bucket] || 99;
+          if (oa !== ob) return oa - ob;
           return String(b.fecha).localeCompare(String(a.fecha));
         });
 
@@ -410,14 +377,21 @@
           const q = textFilter.toLowerCase();
           data = data.filter(r =>
             [
-              r.tipo, r.empresa, r.area, r.descripcion, r.impacto, r.responsable
+              r.empresa,
+              r.area,
+              r.descripcion,
+              r.responsable,
+              r.tipo,
+              r.impacto,
+              r.comentarios
             ].join(" ").toLowerCase().includes(q)
           );
         }
 
         if (monthFilter) {
           data = data.filter(r =>
-            getMonthKey(r.fecha) === monthFilter || getMonthKey(r.mesCobro) === monthFilter
+            String(r.fecha || "").slice(0, 7) === monthFilter ||
+            String(r.mesCobro || "").slice(0, 7) === monthFilter
           );
         }
 
@@ -433,633 +407,772 @@
         return data;
       }, [enriched, textFilter, monthFilter, typeFilter, statusFilter]);
 
+      function clearAll() {
+        if (!confirm("¿Seguro que quieres borrar toda la bitácora?")) return;
+        setRows([]);
+      }
+
+      function resetFormAndExitEdit() {
+        setForm(defaultForm());
+        setEditingId(null);
+      }
+
+      function saveForm() {
+        if (!String(form.descripcion || "").trim()) {
+          alert("Debes ingresar la solicitud o situación.");
+          return;
+        }
+
+        const payload = {
+          id: editingId || Date.now(),
+          fecha: form.fecha || todayISO(),
+          tipo: form.tipo,
+          empresa: form.empresa.trim(),
+          area: form.area.trim(),
+          descripcion: form.descripcion.trim(),
+          impacto: form.impacto,
+          responsable: form.responsable.trim(),
+          estado: form.estado,
+          fechaCompromiso: form.fechaCompromiso || "",
+          validado: form.validado,
+          cobrable: form.cobrable,
+          pasadoEDP: form.pasadoEDP,
+          mesCobro: form.mesCobro || "",
+          montoEstimado: form.montoEstimado === "" ? "" : Number(form.montoEstimado),
+          evidencia: form.evidencia.trim(),
+          comentarios: form.comentarios.trim()
+        };
+
+        if (editingId) {
+          setRows(prev => prev.map(r => r.id === editingId ? payload : r));
+        } else {
+          setRows(prev => [payload, ...prev]);
+        }
+
+        resetFormAndExitEdit();
+        setTab(TABS.RESUMEN);
+      }
+
+      function editRow(row) {
+        setForm({
+          id: row.id,
+          fecha: row.fecha || todayISO(),
+          tipo: row.tipo || "Servicio adicional",
+          empresa: row.empresa || "",
+          area: row.area || "",
+          descripcion: row.descripcion || "",
+          impacto: row.impacto || "Aumenta ingreso",
+          responsable: row.responsable || "",
+          estado: row.estado || "Abierto",
+          fechaCompromiso: row.fechaCompromiso || "",
+          validado: row.validado || "No",
+          cobrable: row.cobrable || "Sí",
+          pasadoEDP: row.pasadoEDP || "No",
+          mesCobro: row.mesCobro || todayISO().slice(0, 7),
+          montoEstimado: row.montoEstimado ?? "",
+          evidencia: row.evidencia || "",
+          comentarios: row.comentarios || ""
+        });
+        setEditingId(row.id);
+        setTab(TABS.NUEVO);
+      }
+
+      function deleteRow(id) {
+        if (!confirm("¿Eliminar este registro?")) return;
+        setRows(prev => prev.filter(r => r.id !== id));
+      }
+
+      function quickUpdate(id, patch) {
+        setRows(prev => prev.map(r => r.id === id ? { ...r, ...patch } : r));
+      }
+
+      function exportCSV() {
+        const headers = [
+          "ID",
+          "Fecha",
+          "Tipo",
+          "Empresa",
+          "Área",
+          "Solicitud / situación",
+          "Impacto",
+          "Responsable",
+          "Estado",
+          "Fecha compromiso",
+          "Validado",
+          "Cobrable",
+          "Pasado a EDP",
+          "Mes cobro",
+          "Monto estimado",
+          "Evidencia",
+          "Comentarios"
+        ];
+
+        const lines = rows.map(r => [
+          r.id,
+          r.fecha,
+          r.tipo,
+          r.empresa,
+          r.area,
+          r.descripcion,
+          r.impacto,
+          r.responsable,
+          r.estado,
+          r.fechaCompromiso,
+          r.validado,
+          r.cobrable,
+          r.pasadoEDP,
+          r.mesCobro,
+          r.montoEstimado,
+          r.evidencia,
+          r.comentarios
+        ]);
+
+        const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+        const csv = [headers.map(esc).join(";"), ...lines.map(row => row.map(esc).join(";"))].join("\n");
+        const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "bitacora_operativa_v3.csv";
+        a.click();
+        URL.revokeObjectURL(a.href);
+      }
+
       return (
         <div className="min-h-full">
           <div className="border-b bg-white">
             <div className="mx-auto max-w-7xl px-4 py-4">
-              <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                 <div>
                   <h1 className="text-2xl font-bold">Bitácora Operativa</h1>
                   <p className="text-sm text-slate-600">
-                    Registro personal con foco en seguimiento, riesgos, validación y cobro.
+                    Control personal de hechos, solicitudes, seguimiento, riesgos y cobro.
                   </p>
                 </div>
 
                 <div className="flex flex-wrap gap-2">
-                  <button
-                    onClick={exportCSV}
-                    className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-50"
-                  >
-                    Exportar CSV
-                  </button>
-                  <button
-                    onClick={clearAll}
-                    className="rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-100"
-                  >
-                    Vaciar todo
-                  </button>
+                  <TabButton active={tab === TABS.RESUMEN} onClick={() => setTab(TABS.RESUMEN)}>
+                    Resumen de atención
+                  </TabButton>
+                  <TabButton active={tab === TABS.NUEVO} onClick={() => setTab(TABS.NUEVO)}>
+                    {editingId ? "Editar registro" : "Nuevo ingreso"}
+                  </TabButton>
+                  <TabButton active={tab === TABS.HISTORIAL} onClick={() => setTab(TABS.HISTORIAL)}>
+                    Historial
+                  </TabButton>
                 </div>
               </div>
             </div>
           </div>
 
-          <div className="mx-auto max-w-7xl p-4 space-y-5">
+          <div className="mx-auto max-w-7xl p-4">
+            <div className="mb-4 flex flex-wrap gap-2">
+              <button
+                onClick={exportCSV}
+                className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-50"
+              >
+                Exportar CSV
+              </button>
 
-            <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="mb-4">
-                <h2 className="text-lg font-semibold">Resumen de atención</h2>
-                <p className="text-sm text-slate-600">
-                  Esto es lo que requiere mirada inmediata. Haz clic en una tarjeta para filtrar la bandeja.
-                </p>
+              <button
+                onClick={clearAll}
+                className="rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-100"
+              >
+                Vaciar todo
+              </button>
+            </div>
+
+            {tab === TABS.RESUMEN && (
+              <div className="space-y-5">
+                <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="mb-4">
+                    <h2 className="text-lg font-semibold">Resumen de atención</h2>
+                    <p className="text-sm text-slate-600">
+                      Todas las tarjetas de arriba se reflejan abajo en Atención inmediata.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3 xl:grid-cols-7">
+                    <SummaryCard
+                      title="Para cobrar"
+                      count={summary.cobro.length}
+                      detail="Listos para EDP"
+                      amount={summary.montoCobro > 0 ? formatCLP(summary.montoCobro) : ""}
+                      tone="green"
+                      active={attentionFilter === "cobro"}
+                      onClick={() => setAttentionFilter(attentionFilter === "cobro" ? "" : "cobro")}
+                    />
+                    <SummaryCard
+                      title="Sin validar"
+                      count={summary.validacion.length}
+                      detail="Ejecutados sin respaldo"
+                      tone="amber"
+                      active={attentionFilter === "validacion"}
+                      onClick={() => setAttentionFilter(attentionFilter === "validacion" ? "" : "validacion")}
+                    />
+                    <SummaryCard
+                      title="Riesgos abiertos"
+                      count={summary.riesgo.length}
+                      detail="Impacto no cerrado"
+                      tone="red"
+                      active={attentionFilter === "riesgo"}
+                      onClick={() => setAttentionFilter(attentionFilter === "riesgo" ? "" : "riesgo")}
+                    />
+                    <SummaryCard
+                      title="Vencidos"
+                      count={summary.vencido.length}
+                      detail="Fuera de plazo"
+                      tone="slate"
+                      active={attentionFilter === "vencido"}
+                      onClick={() => setAttentionFilter(attentionFilter === "vencido" ? "" : "vencido")}
+                    />
+                    <SummaryCard
+                      title="Próximo a vencer"
+                      count={summary.proximo.length}
+                      detail="Mirar antes de 3 días"
+                      tone="orange"
+                      active={attentionFilter === "proximo"}
+                      onClick={() => setAttentionFilter(attentionFilter === "proximo" ? "" : "proximo")}
+                    />
+                    <SummaryCard
+                      title="Impacto en costo"
+                      count={summary.costo.length}
+                      detail="Movimientos abiertos"
+                      tone="blue"
+                      active={attentionFilter === "costo"}
+                      onClick={() => setAttentionFilter(attentionFilter === "costo" ? "" : "costo")}
+                    />
+                    <SummaryCard
+                      title="Inicio sin cobro"
+                      count={summary.comercial.length}
+                      detail="Falta cierre comercial"
+                      tone="violet"
+                      active={attentionFilter === "comercial"}
+                      onClick={() => setAttentionFilter(attentionFilter === "comercial" ? "" : "comercial")}
+                    />
+                  </div>
+                </section>
+
+                <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <h2 className="text-lg font-semibold">Atención inmediata</h2>
+                      <p className="text-sm text-slate-600">
+                        Casos que efectivamente requieren revisión, cobro, validación o cierre.
+                      </p>
+                    </div>
+
+                    {attentionFilter && (
+                      <button
+                        onClick={() => setAttentionFilter("")}
+                        className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-50"
+                      >
+                        Quitar filtro
+                      </button>
+                    )}
+                  </div>
+
+                  {attentionList.length === 0 ? (
+                    <div className="rounded-2xl border border-dashed border-slate-300 p-8 text-center text-slate-500">
+                      No hay casos en atención inmediata.
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {attentionList.map(r => (
+                        <div key={r.id} className={"rounded-2xl border p-4 shadow-sm " + colorClass(r.attention.color)}>
+                          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                            <div className="min-w-0 flex-1">
+                              <div className="mb-3 flex flex-wrap items-center gap-2">
+                                <span className={"rounded-full px-2.5 py-1 text-xs font-semibold " + pillClass(r.attention.color)}>
+                                  {r.attention.titulo}
+                                </span>
+
+                                <span className={"inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold " + r.semaforo.badge}>
+                                  <span className={"h-2.5 w-2.5 rounded-full " + r.semaforo.dot}></span>
+                                  Semáforo {r.semaforo.label}
+                                </span>
+
+                                <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700">
+                                  {r.tipo}
+                                </span>
+
+                                {r.empresa && (
+                                  <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700">
+                                    {r.empresa}
+                                  </span>
+                                )}
+
+                                {r.area && (
+                                  <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700">
+                                    {r.area}
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="text-lg font-semibold text-slate-900">
+                                {r.descripcion}
+                              </div>
+
+                              <div className="mt-2 text-sm text-slate-700">
+                                <b>Atención:</b> {r.attention.mensaje}
+                              </div>
+
+                              <div className="mt-4 grid grid-cols-1 gap-3 text-sm text-slate-700 md:grid-cols-2 xl:grid-cols-6">
+                                <div><b>Fecha:</b> {r.fecha || "-"}</div>
+                                <div><b>Estado:</b> {r.estado || "-"}</div>
+                                <div><b>Responsable:</b> {r.responsable || "-"}</div>
+                                <div><b>Compromiso:</b> {r.fechaCompromiso || "-"}</div>
+                                <div><b>Monto:</b> {r.montoEstimado ? formatCLP(r.montoEstimado) : "-"}</div>
+                                <div><b>EDP:</b> {r.pasadoEDP || "-"}</div>
+                              </div>
+
+                              {(r.evidencia || r.comentarios) && (
+                                <div className="mt-4 grid grid-cols-1 gap-3 xl:grid-cols-2">
+                                  {r.evidencia && (
+                                    <div className="rounded-xl border border-slate-200 bg-white p-3">
+                                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                        Evidencia
+                                      </div>
+                                      <div className="mt-1 break-all text-sm text-slate-700">
+                                        {r.evidencia}
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {r.comentarios && (
+                                    <div className="rounded-xl border border-slate-200 bg-white p-3">
+                                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                        Comentarios
+                                      </div>
+                                      <div className="mt-1 whitespace-pre-wrap text-sm text-slate-700">
+                                        {r.comentarios}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="flex w-full flex-col gap-2 xl:w-56">
+                              {r.attention.bucket === "validacion" && (
+                                <button
+                                  onClick={() => quickUpdate(r.id, { validado: "Sí" })}
+                                  className="rounded-xl bg-amber-600 px-3 py-2 text-sm font-medium text-white hover:bg-amber-700"
+                                >
+                                  Marcar validado
+                                </button>
+                              )}
+
+                              {r.attention.bucket === "cobro" && (
+                                <button
+                                  onClick={() => quickUpdate(r.id, { pasadoEDP: "Sí" })}
+                                  className="rounded-xl bg-green-600 px-3 py-2 text-sm font-medium text-white hover:bg-green-700"
+                                >
+                                  Pasar a EDP
+                                </button>
+                              )}
+
+                              {(r.attention.bucket === "vencido" || r.attention.bucket === "proximo" || r.attention.bucket === "riesgo" || r.attention.bucket === "costo" || r.attention.bucket === "comercial") && (
+                                <button
+                                  onClick={() => quickUpdate(r.id, { estado: "En gestión" })}
+                                  className="rounded-xl bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800"
+                                >
+                                  Marcar en gestión
+                                </button>
+                              )}
+
+                              <button
+                                onClick={() => editRow(r)}
+                                className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-50"
+                              >
+                                Editar
+                              </button>
+
+                              <button
+                                onClick={() => quickUpdate(r.id, { estado: "Cerrado" })}
+                                className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-50"
+                              >
+                                Cerrar caso
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
               </div>
+            )}
 
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-3 xl:grid-cols-6">
-                <SummaryCard
-                  title="Para cobrar"
-                  value={summary.cobro.length}
-                  detail="Casos listos para pasar a EDP"
-                  amount={summary.montoCobro > 0 ? formatCLP(summary.montoCobro) : ""}
-                  tone="green"
-                  active={attentionFilter === "cobro"}
-                  onClick={() => setAttentionFilter(attentionFilter === "cobro" ? "" : "cobro")}
-                />
-                <SummaryCard
-                  title="Sin validar"
-                  value={summary.validacion.length}
-                  detail="Ejecutados sin respaldo"
-                  tone="amber"
-                  active={attentionFilter === "validacion"}
-                  onClick={() => setAttentionFilter(attentionFilter === "validacion" ? "" : "validacion")}
-                />
-                <SummaryCard
-                  title="Riesgos abiertos"
-                  value={summary.riesgo.length}
-                  detail="Casos con impacto no cerrado"
-                  tone="red"
-                  active={attentionFilter === "riesgo"}
-                  onClick={() => setAttentionFilter(attentionFilter === "riesgo" ? "" : "riesgo")}
-                />
-                <SummaryCard
-                  title="Vencidos"
-                  value={summary.vencido.length}
-                  detail="Compromisos fuera de plazo"
-                  tone="slate"
-                  active={attentionFilter === "vencido"}
-                  onClick={() => setAttentionFilter(attentionFilter === "vencido" ? "" : "vencido")}
-                />
-                <SummaryCard
-                  title="Impacto en costo"
-                  value={summary.costo.length}
-                  detail="Movimientos abiertos con costo"
-                  tone="blue"
-                  active={attentionFilter === "costo"}
-                  onClick={() => setAttentionFilter(attentionFilter === "costo" ? "" : "costo")}
-                />
-                <SummaryCard
-                  title="Inicio sin cobro"
-                  value={summary.comercial.length}
-                  detail="Servicio iniciado sin cierre comercial"
-                  tone="violet"
-                  active={attentionFilter === "comercial"}
-                  onClick={() => setAttentionFilter(attentionFilter === "comercial" ? "" : "comercial")}
-                />
-              </div>
-            </section>
-
-            <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="mb-4">
-                <h2 className="text-lg font-semibold">Nuevo registro</h2>
-                <p className="text-sm text-slate-600">
-                  Registra el hecho una sola vez. El sistema decide si debe quedar en atención.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-                <div>
-                  <label className="mb-1 block text-sm font-medium">Fecha</label>
-                  <input
-                    type="date"
-                    value={form.fecha}
-                    onChange={(e) => setForm({ ...form, fecha: e.target.value })}
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-sm font-medium">Tipo</label>
-                  <select
-                    value={form.tipo}
-                    onChange={(e) => setForm({ ...form, tipo: e.target.value })}
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
-                  >
-                    {TIPOS.map(x => <option key={x}>{x}</option>)}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-sm font-medium">Empresa</label>
-                  <input
-                    value={form.empresa}
-                    onChange={(e) => setForm({ ...form, empresa: e.target.value })}
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
-                    placeholder="Ej. Codelco / EECC"
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-sm font-medium">Área</label>
-                  <input
-                    value={form.area}
-                    onChange={(e) => setForm({ ...form, area: e.target.value })}
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
-                    placeholder="Ej. Aseo / Hotelería / Casino"
-                  />
-                </div>
-
-                <div className="md:col-span-4">
-                  <label className="mb-1 block text-sm font-medium">Solicitud / situación</label>
-                  <textarea
-                    rows="3"
-                    value={form.descripcion}
-                    onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
-                    placeholder="Ej. Se solicitó aseo adicional en casino. Ejecutado el 20/03, pendiente validación de administrador."
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-sm font-medium">Impacto</label>
-                  <select
-                    value={form.impacto}
-                    onChange={(e) => setForm({ ...form, impacto: e.target.value })}
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
-                  >
-                    {IMPACTOS.map(x => <option key={x}>{x}</option>)}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-sm font-medium">Responsable</label>
-                  <input
-                    value={form.responsable}
-                    onChange={(e) => setForm({ ...form, responsable: e.target.value })}
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
-                    placeholder="Nombre responsable"
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-sm font-medium">Estado</label>
-                  <select
-                    value={form.estado}
-                    onChange={(e) => setForm({ ...form, estado: e.target.value })}
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
-                  >
-                    {ESTADOS.map(x => <option key={x}>{x}</option>)}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-sm font-medium">Fecha compromiso</label>
-                  <input
-                    type="date"
-                    value={form.fechaCompromiso}
-                    onChange={(e) => setForm({ ...form, fechaCompromiso: e.target.value })}
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-sm font-medium">Validado</label>
-                  <select
-                    value={form.validado}
-                    onChange={(e) => setForm({ ...form, validado: e.target.value })}
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
-                  >
-                    <option>No</option>
-                    <option>Sí</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-sm font-medium">Cobrable</label>
-                  <select
-                    value={form.cobrable}
-                    onChange={(e) => setForm({ ...form, cobrable: e.target.value })}
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
-                  >
-                    <option>Sí</option>
-                    <option>No</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-sm font-medium">Mes cobro</label>
-                  <input
-                    type="month"
-                    value={form.mesCobro}
-                    onChange={(e) => setForm({ ...form, mesCobro: e.target.value })}
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-sm font-medium">Monto estimado</label>
-                  <input
-                    type="number"
-                    value={form.montoEstimado}
-                    onChange={(e) => setForm({ ...form, montoEstimado: e.target.value })}
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
-                    placeholder="0"
-                  />
-                </div>
-              </div>
-
-              <div className="mt-4 flex flex-wrap gap-2">
-                <button
-                  onClick={addRow}
-                  className="rounded-xl bg-slate-900 px-4 py-2 font-medium text-white hover:bg-slate-800"
-                >
-                  Guardar registro
-                </button>
-                <button
-                  onClick={resetForm}
-                  className="rounded-xl border border-slate-300 bg-white px-4 py-2 font-medium hover:bg-slate-50"
-                >
-                  Limpiar
-                </button>
-              </div>
-            </section>
-
-            <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold">Atención inmediata</h2>
+            {tab === TABS.NUEVO && (
+              <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="mb-4">
+                  <h2 className="text-lg font-semibold">
+                    {editingId ? "Editar registro" : "Nuevo ingreso"}
+                  </h2>
                   <p className="text-sm text-slate-600">
-                    Esta es la bandeja útil. Aquí están los casos que requieren seguimiento real.
+                    Ingresa el caso completo una vez. Luego el sistema lo ordena en resumen, atención o historial.
                   </p>
                 </div>
 
-                {attentionFilter && (
-                  <button
-                    onClick={() => setAttentionFilter("")}
-                    className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-50"
-                  >
-                    Quitar filtro de atención
-                  </button>
-                )}
-              </div>
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+                  <div>
+                    <label className="mb-1 block text-sm font-medium">Fecha</label>
+                    <input
+                      type="date"
+                      value={form.fecha}
+                      onChange={(e) => setForm({ ...form, fecha: e.target.value })}
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                    />
+                  </div>
 
-              {attentionList.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-300 p-8 text-center text-slate-500">
-                  No hay casos que requieran atención inmediata con el filtro actual.
+                  <div>
+                    <label className="mb-1 block text-sm font-medium">Tipo</label>
+                    <select
+                      value={form.tipo}
+                      onChange={(e) => setForm({ ...form, tipo: e.target.value })}
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                    >
+                      {TIPOS.map(x => <option key={x}>{x}</option>)}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium">Empresa</label>
+                    <input
+                      value={form.empresa}
+                      onChange={(e) => setForm({ ...form, empresa: e.target.value })}
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                      placeholder="Ej. Codelco / EECC"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium">Área</label>
+                    <input
+                      value={form.area}
+                      onChange={(e) => setForm({ ...form, area: e.target.value })}
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                      placeholder="Ej. Aseo / Hotelería / Casino"
+                    />
+                  </div>
+
+                  <div className="md:col-span-4">
+                    <label className="mb-1 block text-sm font-medium">Solicitud / situación</label>
+                    <textarea
+                      rows="4"
+                      value={form.descripcion}
+                      onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                      placeholder="Describe claramente qué pasó, qué se pidió o qué requiere seguimiento."
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium">Impacto</label>
+                    <select
+                      value={form.impacto}
+                      onChange={(e) => setForm({ ...form, impacto: e.target.value })}
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                    >
+                      {IMPACTOS.map(x => <option key={x}>{x}</option>)}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium">Responsable</label>
+                    <input
+                      value={form.responsable}
+                      onChange={(e) => setForm({ ...form, responsable: e.target.value })}
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                      placeholder="Nombre responsable"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium">Estado</label>
+                    <select
+                      value={form.estado}
+                      onChange={(e) => setForm({ ...form, estado: e.target.value })}
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                    >
+                      {ESTADOS.map(x => <option key={x}>{x}</option>)}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium">Fecha compromiso</label>
+                    <input
+                      type="date"
+                      value={form.fechaCompromiso}
+                      onChange={(e) => setForm({ ...form, fechaCompromiso: e.target.value })}
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium">Validado</label>
+                    <select
+                      value={form.validado}
+                      onChange={(e) => setForm({ ...form, validado: e.target.value })}
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                    >
+                      {VALIDACION.map(x => <option key={x}>{x}</option>)}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium">Cobrable</label>
+                    <select
+                      value={form.cobrable}
+                      onChange={(e) => setForm({ ...form, cobrable: e.target.value })}
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                    >
+                      {COBRABLE.map(x => <option key={x}>{x}</option>)}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium">Pasado a EDP</label>
+                    <select
+                      value={form.pasadoEDP}
+                      onChange={(e) => setForm({ ...form, pasadoEDP: e.target.value })}
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                    >
+                      {EDP.map(x => <option key={x}>{x}</option>)}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium">Mes cobro</label>
+                    <input
+                      type="month"
+                      value={form.mesCobro}
+                      onChange={(e) => setForm({ ...form, mesCobro: e.target.value })}
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium">Monto estimado</label>
+                    <input
+                      type="number"
+                      value={form.montoEstimado}
+                      onChange={(e) => setForm({ ...form, montoEstimado: e.target.value })}
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                      placeholder="0"
+                    />
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="mb-1 block text-sm font-medium">Adjuntar evidencia</label>
+                    <input
+                      value={form.evidencia}
+                      onChange={(e) => setForm({ ...form, evidencia: e.target.value })}
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                      placeholder="Pega ruta, link o referencia del archivo"
+                    />
+                  </div>
+
+                  <div className="md:col-span-4">
+                    <label className="mb-1 block text-sm font-medium">Comentarios</label>
+                    <textarea
+                      rows="4"
+                      value={form.comentarios}
+                      onChange={(e) => setForm({ ...form, comentarios: e.target.value })}
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                      placeholder="Observaciones, acuerdos, seguimiento o contexto adicional."
+                    />
+                  </div>
                 </div>
-              ) : (
-                <div className="space-y-3">
-                  {attentionList.map(r => {
-                    const a = r.attention;
-                    return (
-                      <div key={r.id} className={"rounded-2xl border p-4 shadow-sm " + colorMap(a.color)}>
-                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button
+                    onClick={saveForm}
+                    className="rounded-xl bg-slate-900 px-4 py-2 font-medium text-white hover:bg-slate-800"
+                  >
+                    {editingId ? "Guardar cambios" : "Guardar registro"}
+                  </button>
+
+                  <button
+                    onClick={resetFormAndExitEdit}
+                    className="rounded-xl border border-slate-300 bg-white px-4 py-2 font-medium hover:bg-slate-50"
+                  >
+                    Limpiar
+                  </button>
+                </div>
+              </section>
+            )}
+
+            {tab === TABS.HISTORIAL && (
+              <section className="space-y-5">
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="mb-4">
+                    <h2 className="text-lg font-semibold">Historial</h2>
+                    <p className="text-sm text-slate-600">
+                      Vista fija para revisar y buscar. La edición se hace con el botón “Editar”.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+                    <div>
+                      <label className="mb-1 block text-sm font-medium">Buscar</label>
+                      <input
+                        value={textFilter}
+                        onChange={(e) => setTextFilter(e.target.value)}
+                        className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                        placeholder="Empresa, área, solicitud..."
+                      />
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-sm font-medium">Mes</label>
+                      <input
+                        type="month"
+                        value={monthFilter}
+                        onChange={(e) => setMonthFilter(e.target.value)}
+                        className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-sm font-medium">Tipo</label>
+                      <select
+                        value={typeFilter}
+                        onChange={(e) => setTypeFilter(e.target.value)}
+                        className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                      >
+                        <option value="">Todos</option>
+                        {TIPOS.map(x => <option key={x}>{x}</option>)}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-sm font-medium">Estado</label>
+                      <select
+                        value={statusFilter}
+                        onChange={(e) => setStatusFilter(e.target.value)}
+                        className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                      >
+                        <option value="">Todos</option>
+                        {ESTADOS.map(x => <option key={x}>{x}</option>)}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="mt-3">
+                    <button
+                      onClick={() => {
+                        setTextFilter("");
+                        setMonthFilter("");
+                        setTypeFilter("");
+                        setStatusFilter("");
+                      }}
+                      className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-50"
+                    >
+                      Limpiar filtros
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  {historyRows.length === 0 ? (
+                    <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-slate-500">
+                      No hay registros con los filtros actuales.
+                    </div>
+                  ) : (
+                    historyRows.map(r => (
+                      <div key={r.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                           <div className="min-w-0 flex-1">
-                            <div className="mb-2 flex flex-wrap items-center gap-2">
-                              <span className={"rounded-full px-2.5 py-1 text-xs font-semibold " + badgeMap(a.color)}>
-                                {a.titulo}
+                            <div className="mb-3 flex flex-wrap items-center gap-2">
+                              <span className={"inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold " + r.semaforo.badge}>
+                                <span className={"h-2.5 w-2.5 rounded-full " + r.semaforo.dot}></span>
+                                Semáforo {r.semaforo.label}
                               </span>
-                              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
+
+                              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700">
                                 {r.tipo}
                               </span>
-                              <span className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-slate-700 border border-slate-200">
-                                {r.empresa || "Sin empresa"}
+
+                              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700">
+                                Estado {r.estado}
                               </span>
-                              <span className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-slate-700 border border-slate-200">
-                                {r.area || "Sin área"}
-                              </span>
+
+                              {r.attention && (
+                                <span className={"rounded-full px-2.5 py-1 text-xs font-semibold " + pillClass(r.attention.color)}>
+                                  {r.attention.titulo}
+                                </span>
+                              )}
                             </div>
 
-                            <div className="text-base font-semibold text-slate-900">
+                            <div className="text-lg font-semibold text-slate-900">
                               {r.descripcion}
                             </div>
 
-                            <div className="mt-2 text-sm text-slate-700">
-                              <b>Atención:</b> {a.mensaje}
-                            </div>
-
-                            <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-slate-700 md:grid-cols-2 xl:grid-cols-5">
+                            <div className="mt-3 grid grid-cols-1 gap-3 text-sm text-slate-700 md:grid-cols-2 xl:grid-cols-4">
                               <div><b>Fecha:</b> {r.fecha || "-"}</div>
-                              <div><b>Estado:</b> {r.estado || "-"}</div>
+                              <div><b>Empresa:</b> {r.empresa || "-"}</div>
+                              <div><b>Área:</b> {r.area || "-"}</div>
                               <div><b>Responsable:</b> {r.responsable || "-"}</div>
                               <div><b>Compromiso:</b> {r.fechaCompromiso || "-"}</div>
+                              <div><b>Validado:</b> {r.validado || "-"}</div>
+                              <div><b>Cobrable:</b> {r.cobrable || "-"}</div>
+                              <div><b>EDP:</b> {r.pasadoEDP || "-"}</div>
+                              <div><b>Mes cobro:</b> {r.mesCobro || "-"}</div>
                               <div><b>Monto:</b> {r.montoEstimado ? formatCLP(r.montoEstimado) : "-"}</div>
+                              <div><b>Impacto:</b> {r.impacto || "-"}</div>
+                              <div><b>ID:</b> {r.id}</div>
                             </div>
+
+                            {(r.evidencia || r.comentarios) && (
+                              <div className="mt-4 grid grid-cols-1 gap-3 xl:grid-cols-2">
+                                {r.evidencia && (
+                                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                      Evidencia
+                                    </div>
+                                    <div className="mt-1 break-all text-sm text-slate-700">
+                                      {r.evidencia}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {r.comentarios && (
+                                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                      Comentarios
+                                    </div>
+                                    <div className="mt-1 whitespace-pre-wrap text-sm text-slate-700">
+                                      {r.comentarios}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
 
-                          <div className="flex w-full flex-col gap-2 lg:w-56">
-                            {a.bucket === "validacion" && (
-                              <button
-                                onClick={() => updateRow(r.id, "validado", "Sí")}
-                                className="rounded-xl bg-amber-600 px-3 py-2 text-sm font-medium text-white hover:bg-amber-700"
-                              >
-                                Marcar validado
-                              </button>
-                            )}
-
-                            {a.bucket === "cobro" && (
-                              <button
-                                onClick={() => updateRow(r.id, "pasadoEDP", "Sí")}
-                                className="rounded-xl bg-green-600 px-3 py-2 text-sm font-medium text-white hover:bg-green-700"
-                              >
-                                Pasar a EDP
-                              </button>
-                            )}
-
-                            {(a.bucket === "vencido" || a.bucket === "proximo" || a.bucket === "riesgo" || a.bucket === "costo" || a.bucket === "comercial") && (
-                              <button
-                                onClick={() => updateRow(r.id, "estado", "En gestión")}
-                                className="rounded-xl bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-900"
-                              >
-                                Marcar en gestión
-                              </button>
-                            )}
-
+                          <div className="flex w-full flex-col gap-2 xl:w-48">
                             <button
-                              onClick={() => updateRow(r.id, "estado", "Cerrado")}
-                              className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-50"
+                              onClick={() => editRow(r)}
+                              className="rounded-xl bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800"
                             >
-                              Cerrar caso
+                              Editar
                             </button>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
 
-            <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="mb-4">
-                <h2 className="text-lg font-semibold">Historial</h2>
-                <p className="text-sm text-slate-600">
-                  Usa esta tabla para buscar, revisar y editar el detalle. No es la vista principal.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-                <div>
-                  <label className="mb-1 block text-sm font-medium">Buscar</label>
-                  <input
-                    value={textFilter}
-                    onChange={(e) => setTextFilter(e.target.value)}
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
-                    placeholder="Empresa, área, solicitud..."
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-sm font-medium">Mes</label>
-                  <input
-                    type="month"
-                    value={monthFilter}
-                    onChange={(e) => setMonthFilter(e.target.value)}
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-sm font-medium">Tipo</label>
-                  <select
-                    value={typeFilter}
-                    onChange={(e) => setTypeFilter(e.target.value)}
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
-                  >
-                    <option value="">Todos</option>
-                    {TIPOS.map(x => <option key={x}>{x}</option>)}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-sm font-medium">Estado</label>
-                  <select
-                    value={statusFilter}
-                    onChange={(e) => setStatusFilter(e.target.value)}
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
-                  >
-                    <option value="">Todos</option>
-                    {ESTADOS.map(x => <option key={x}>{x}</option>)}
-                  </select>
-                </div>
-              </div>
-
-              <div className="mt-3">
-                <button
-                  onClick={() => {
-                    setTextFilter("");
-                    setMonthFilter("");
-                    setTypeFilter("");
-                    setStatusFilter("");
-                  }}
-                  className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-50"
-                >
-                  Limpiar filtros
-                </button>
-              </div>
-
-              <div className="mt-4 overflow-auto">
-                <table className="min-w-[1400px] w-full text-sm">
-                  <thead>
-                    <tr className="border-b bg-slate-50 text-left">
-                      <th className="p-2">Fecha</th>
-                      <th className="p-2">Tipo</th>
-                      <th className="p-2">Empresa</th>
-                      <th className="p-2">Área</th>
-                      <th className="p-2">Solicitud / situación</th>
-                      <th className="p-2">Impacto</th>
-                      <th className="p-2">Responsable</th>
-                      <th className="p-2">Estado</th>
-                      <th className="p-2">Compromiso</th>
-                      <th className="p-2">Validado</th>
-                      <th className="p-2">Cobrable</th>
-                      <th className="p-2">EDP</th>
-                      <th className="p-2">Mes cobro</th>
-                      <th className="p-2">Monto</th>
-                      <th className="p-2">Atención</th>
-                      <th className="p-2">Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {historyRows.length === 0 ? (
-                      <tr>
-                        <td colSpan="16" className="p-6 text-center text-slate-500">
-                          No hay registros para los filtros actuales.
-                        </td>
-                      </tr>
-                    ) : historyRows.map(r => (
-                      <tr key={r.id} className="border-b align-top">
-                        <td className="p-2">
-                          <input
-                            type="date"
-                            value={r.fecha || ""}
-                            onChange={(e) => updateRow(r.id, "fecha", e.target.value)}
-                            className="w-full rounded-lg border border-slate-300 px-2 py-1"
-                          />
-                        </td>
-                        <td className="p-2">
-                          <select
-                            value={r.tipo}
-                            onChange={(e) => updateRow(r.id, "tipo", e.target.value)}
-                            className="w-full rounded-lg border border-slate-300 px-2 py-1"
-                          >
-                            {TIPOS.map(x => <option key={x}>{x}</option>)}
-                          </select>
-                        </td>
-                        <td className="p-2">
-                          <input
-                            value={r.empresa || ""}
-                            onChange={(e) => updateRow(r.id, "empresa", e.target.value)}
-                            className="w-full rounded-lg border border-slate-300 px-2 py-1"
-                          />
-                        </td>
-                        <td className="p-2">
-                          <input
-                            value={r.area || ""}
-                            onChange={(e) => updateRow(r.id, "area", e.target.value)}
-                            className="w-full rounded-lg border border-slate-300 px-2 py-1"
-                          />
-                        </td>
-                        <td className="p-2">
-                          <textarea
-                            rows="3"
-                            value={r.descripcion || ""}
-                            onChange={(e) => updateRow(r.id, "descripcion", e.target.value)}
-                            className="w-full rounded-lg border border-slate-300 px-2 py-1"
-                          />
-                        </td>
-                        <td className="p-2">
-                          <select
-                            value={r.impacto}
-                            onChange={(e) => updateRow(r.id, "impacto", e.target.value)}
-                            className="w-full rounded-lg border border-slate-300 px-2 py-1"
-                          >
-                            {IMPACTOS.map(x => <option key={x}>{x}</option>)}
-                          </select>
-                        </td>
-                        <td className="p-2">
-                          <input
-                            value={r.responsable || ""}
-                            onChange={(e) => updateRow(r.id, "responsable", e.target.value)}
-                            className="w-full rounded-lg border border-slate-300 px-2 py-1"
-                          />
-                        </td>
-                        <td className="p-2">
-                          <select
-                            value={r.estado}
-                            onChange={(e) => updateRow(r.id, "estado", e.target.value)}
-                            className="w-full rounded-lg border border-slate-300 px-2 py-1"
-                          >
-                            {ESTADOS.map(x => <option key={x}>{x}</option>)}
-                          </select>
-                        </td>
-                        <td className="p-2">
-                          <input
-                            type="date"
-                            value={r.fechaCompromiso || ""}
-                            onChange={(e) => updateRow(r.id, "fechaCompromiso", e.target.value)}
-                            className={
-                              "w-full rounded-lg border px-2 py-1 " +
-                              (r.fechaCompromiso && isPast(r.fechaCompromiso) && r.estado !== "Cerrado"
-                                ? "border-red-300 bg-red-50"
-                                : "border-slate-300")
-                            }
-                          />
-                        </td>
-                        <td className="p-2">
-                          <select
-                            value={r.validado}
-                            onChange={(e) => updateRow(r.id, "validado", e.target.value)}
-                            className="w-full rounded-lg border border-slate-300 px-2 py-1"
-                          >
-                            <option>No</option>
-                            <option>Sí</option>
-                          </select>
-                        </td>
-                        <td className="p-2">
-                          <select
-                            value={r.cobrable}
-                            onChange={(e) => updateRow(r.id, "cobrable", e.target.value)}
-                            className="w-full rounded-lg border border-slate-300 px-2 py-1"
-                          >
-                            <option>Sí</option>
-                            <option>No</option>
-                          </select>
-                        </td>
-                        <td className="p-2">
-                          <select
-                            value={r.pasadoEDP}
-                            onChange={(e) => updateRow(r.id, "pasadoEDP", e.target.value)}
-                            className="w-full rounded-lg border border-slate-300 px-2 py-1"
-                          >
-                            <option>No</option>
-                            <option>Sí</option>
-                          </select>
-                        </td>
-                        <td className="p-2">
-                          <input
-                            type="month"
-                            value={r.mesCobro || ""}
-                            onChange={(e) => updateRow(r.id, "mesCobro", e.target.value)}
-                            className="w-full rounded-lg border border-slate-300 px-2 py-1"
-                          />
-                        </td>
-                        <td className="p-2">
-                          <input
-                            type="number"
-                            value={r.montoEstimado ?? ""}
-                            onChange={(e) => updateRow(r.id, "montoEstimado", e.target.value === "" ? "" : Number(e.target.value))}
-                            className="w-full rounded-lg border border-slate-300 px-2 py-1"
-                          />
-                          <div className="mt-1 text-xs text-slate-500">
-                            {r.montoEstimado ? formatCLP(r.montoEstimado) : ""}
-                          </div>
-                        </td>
-                        <td className="p-2">
-                          {r.attention ? (
-                            <div className={"rounded-lg px-2 py-1 text-xs font-semibold " + badgeMap(r.attention.color)}>
-                              {r.attention.titulo}
-                            </div>
-                          ) : (
-                            <span className="text-xs text-slate-400">Sin alerta</span>
-                          )}
-                        </td>
-                        <td className="p-2">
-                          <div className="flex flex-col gap-2">
-                            <button
-                              onClick={() => updateRow(r.id, "estado", "En gestión")}
-                              className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-left hover:bg-slate-50"
-                            >
-                              En gestión
-                            </button>
-                            <button
-                              onClick={() => updateRow(r.id, "estado", "Cerrado")}
-                              className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-left hover:bg-slate-50"
-                            >
-                              Cerrar
-                            </button>
                             <button
                               onClick={() => deleteRow(r.id)}
-                              className="rounded-lg bg-red-100 px-2 py-1 text-left text-red-800 hover:bg-red-200"
+                              className="rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-100"
                             >
                               Eliminar
                             </button>
                           </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </section>
+            )}
           </div>
         </div>
       );
