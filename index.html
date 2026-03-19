@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Bitácora Operativa</title>
+  <title>Bitácora Operativa v2</title>
 
   <script src="https://cdn.tailwindcss.com"></script>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -21,7 +21,7 @@
   <script type="text/babel">
     const { useEffect, useMemo, useState } = React;
 
-    const LS_KEY = "df_bitacora_operativa_v1";
+    const LS_KEY = "df_bitacora_operativa_v2";
 
     const TIPOS = [
       "Inicio de servicio",
@@ -60,6 +60,10 @@
       localStorage.setItem(LS_KEY, JSON.stringify(data));
     }
 
+    function todayISO() {
+      return new Date().toISOString().slice(0, 10);
+    }
+
     function formatCLP(value) {
       const n = Number(value || 0);
       return n.toLocaleString("es-CL", {
@@ -69,50 +73,189 @@
       });
     }
 
-    function todayISO() {
-      return new Date().toISOString().slice(0, 10);
+    function startOfToday() {
+      const now = new Date();
+      return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    }
+
+    function daysDiff(dateStr) {
+      if (!dateStr) return null;
+      const target = new Date(dateStr + "T00:00:00");
+      const today = startOfToday();
+      const diffMs = target - today;
+      return Math.floor(diffMs / (1000 * 60 * 60 * 24));
     }
 
     function isPast(dateStr) {
-      if (!dateStr) return false;
-      const d = new Date(dateStr + "T00:00:00");
-      const now = new Date();
-      const t = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      return d < t;
+      const d = daysDiff(dateStr);
+      return d !== null && d < 0;
     }
 
-    function isThisMonth(dateStr, monthKey) {
-      if (!monthKey) return true;
-      return (dateStr || "").slice(0, 7) === monthKey;
+    function isSoon(dateStr) {
+      const d = daysDiff(dateStr);
+      return d !== null && d >= 0 && d <= 3;
     }
 
-    function HeaderCard({ title, value, sub, tone = "slate", onClick }) {
+    function getMonthKey(dateStr) {
+      return (dateStr || "").slice(0, 7);
+    }
+
+    function safeText(v) {
+      return String(v || "").trim();
+    }
+
+    function getAttentionRule(r) {
+      const tipo = r.tipo;
+      const estado = r.estado;
+      const validado = r.validado;
+      const cobrable = r.cobrable;
+      const pasadoEDP = r.pasadoEDP;
+      const impacto = r.impacto;
+      const fechaCompromiso = r.fechaCompromiso;
+      const mesCobro = r.mesCobro;
+      const monto = Number(r.montoEstimado || 0);
+
+      if (cobrable === "Sí" && (estado === "Ejecutado" || estado === "Cerrado") && validado === "Sí" && pasadoEDP !== "Sí") {
+        return {
+          bucket: "cobro",
+          prioridad: "alta",
+          titulo: "Listo para cobro",
+          mensaje: "Ya está validado y aún no ha sido pasado a EDP.",
+          accion: "Pasar a EDP",
+          color: "green"
+        };
+      }
+
+      if (estado === "Ejecutado" && validado !== "Sí") {
+        return {
+          bucket: "validacion",
+          prioridad: "alta",
+          titulo: "Pendiente de validación",
+          mensaje: "El trabajo ya fue ejecutado, pero sigue sin respaldo de validación.",
+          accion: "Marcar validado",
+          color: "amber"
+        };
+      }
+
+      if (impacto === "Riesgo" && estado !== "Cerrado") {
+        return {
+          bucket: "riesgo",
+          prioridad: "alta",
+          titulo: "Riesgo abierto",
+          mensaje: "Hay un riesgo operativo/comercial abierto que aún no está cerrado.",
+          accion: "Revisar caso",
+          color: "red"
+        };
+      }
+
+      if (fechaCompromiso && isPast(fechaCompromiso) && estado !== "Cerrado") {
+        return {
+          bucket: "vencido",
+          prioridad: "alta",
+          titulo: "Compromiso vencido",
+          mensaje: "La fecha compromiso ya venció y el caso sigue abierto.",
+          accion: "Actualizar estado",
+          color: "slate"
+        };
+      }
+
+      if ((tipo === "Contratación" || tipo === "Salida de personal" || tipo === "Cambio operativo") && impacto === "Aumenta costo" && estado !== "Cerrado") {
+        return {
+          bucket: "costo",
+          prioridad: "media",
+          titulo: "Impacto en costo abierto",
+          mensaje: "Movimiento con impacto en costo aún pendiente de cierre o seguimiento.",
+          accion: "Cerrar seguimiento",
+          color: "blue"
+        };
+      }
+
+      if (tipo === "Inicio de servicio" && cobrable === "Sí" && (!mesCobro || monto <= 0)) {
+        return {
+          bucket: "comercial",
+          prioridad: "media",
+          titulo: "Inicio sin cierre comercial",
+          mensaje: "El servicio inició, pero aún no tiene cobro correctamente definido.",
+          accion: "Completar cobro",
+          color: "violet"
+        };
+      }
+
+      if (fechaCompromiso && isSoon(fechaCompromiso) && estado !== "Cerrado") {
+        return {
+          bucket: "proximo",
+          prioridad: "media",
+          titulo: "Próximo a vencer",
+          mensaje: "Este caso vence pronto y conviene revisarlo ahora.",
+          accion: "Revisar antes de vencimiento",
+          color: "orange"
+        };
+      }
+
+      return null;
+    }
+
+    function colorMap(color) {
+      const map = {
+        green: "border-green-200 bg-green-50",
+        amber: "border-amber-200 bg-amber-50",
+        red: "border-red-200 bg-red-50",
+        slate: "border-slate-200 bg-slate-50",
+        blue: "border-blue-200 bg-blue-50",
+        violet: "border-violet-200 bg-violet-50",
+        orange: "border-orange-200 bg-orange-50"
+      };
+      return map[color] || "border-slate-200 bg-white";
+    }
+
+    function badgeMap(color) {
+      const map = {
+        green: "bg-green-100 text-green-800",
+        amber: "bg-amber-100 text-amber-800",
+        red: "bg-red-100 text-red-800",
+        slate: "bg-slate-200 text-slate-800",
+        blue: "bg-blue-100 text-blue-800",
+        violet: "bg-violet-100 text-violet-800",
+        orange: "bg-orange-100 text-orange-800"
+      };
+      return map[color] || "bg-slate-100 text-slate-800";
+    }
+
+    function SummaryCard({ title, value, detail, amount, tone, active, onClick }) {
       const tones = {
-        green: "bg-green-50 border-green-200 text-green-900",
-        amber: "bg-amber-50 border-amber-200 text-amber-900",
-        red: "bg-red-50 border-red-200 text-red-900",
-        blue: "bg-blue-50 border-blue-200 text-blue-900",
-        slate: "bg-white border-slate-200 text-slate-900"
+        green: "border-green-200 bg-green-50",
+        amber: "border-amber-200 bg-amber-50",
+        red: "border-red-200 bg-red-50",
+        slate: "border-slate-200 bg-white",
+        blue: "border-blue-200 bg-blue-50",
+        violet: "border-violet-200 bg-violet-50"
       };
 
       return (
         <button
+          type="button"
           onClick={onClick}
           className={
-            "w-full rounded-2xl border p-4 text-left shadow-sm transition hover:shadow " +
-            tones[tone]
+            "w-full rounded-2xl border p-4 text-left shadow-sm transition hover:shadow-md " +
+            tones[tone] +
+            (active ? " ring-2 ring-slate-400" : "")
           }
-          type="button"
         >
-          <div className="text-sm font-medium opacity-80">{title}</div>
+          <div className="text-sm font-medium text-slate-700">{title}</div>
           <div className="mt-1 text-3xl font-bold">{value}</div>
-          <div className="mt-1 text-sm opacity-80">{sub}</div>
+          <div className="mt-2 text-sm text-slate-600">{detail}</div>
+          {amount ? <div className="mt-1 text-sm font-semibold">{amount}</div> : null}
         </button>
       );
     }
 
     function App() {
       const [rows, setRows] = useState(() => readLS());
+      const [attentionFilter, setAttentionFilter] = useState("");
+      const [textFilter, setTextFilter] = useState("");
+      const [monthFilter, setMonthFilter] = useState("");
+      const [typeFilter, setTypeFilter] = useState("");
+      const [statusFilter, setStatusFilter] = useState("");
 
       const [form, setForm] = useState({
         fecha: todayISO(),
@@ -129,15 +272,6 @@
         pasadoEDP: "No",
         mesCobro: todayISO().slice(0, 7),
         montoEstimado: ""
-      });
-
-      const [filtro, setFiltro] = useState({
-        texto: "",
-        tipo: "",
-        impacto: "",
-        estado: "",
-        mes: "",
-        alerta: ""
       });
 
       useEffect(() => {
@@ -164,8 +298,7 @@
       }
 
       function addRow() {
-        const descripcion = form.descripcion.trim();
-        if (!descripcion) {
+        if (!safeText(form.descripcion)) {
           alert("Debes ingresar una descripción.");
           return;
         }
@@ -174,11 +307,11 @@
           id: Date.now(),
           fecha: form.fecha || todayISO(),
           tipo: form.tipo,
-          empresa: form.empresa.trim(),
-          area: form.area.trim(),
-          descripcion,
+          empresa: safeText(form.empresa),
+          area: safeText(form.area),
+          descripcion: safeText(form.descripcion),
           impacto: form.impacto,
-          responsable: form.responsable.trim(),
+          responsable: safeText(form.responsable),
           estado: form.estado,
           fechaCompromiso: form.fechaCompromiso || "",
           validado: form.validado,
@@ -193,9 +326,7 @@
       }
 
       function updateRow(id, field, value) {
-        setRows(prev =>
-          prev.map(r => (r.id === id ? { ...r, [field]: value } : r))
-        );
+        setRows(prev => prev.map(r => r.id === id ? { ...r, [field]: value } : r));
       }
 
       function deleteRow(id) {
@@ -203,191 +334,23 @@
         setRows(prev => prev.filter(r => r.id !== id));
       }
 
-      function setAlertFilter(name) {
-        setFiltro(prev => ({
-          ...prev,
-          alerta: prev.alerta === name ? "" : name
-        }));
-      }
-
-      const listosCobro = useMemo(() => {
-        return rows.filter(r =>
-          r.cobrable === "Sí" &&
-          (r.estado === "Cerrado" || r.estado === "Ejecutado") &&
-          r.validado === "Sí" &&
-          r.pasadoEDP !== "Sí"
-        );
-      }, [rows]);
-
-      const ejecutadosSinValidar = useMemo(() => {
-        return rows.filter(r =>
-          r.estado === "Ejecutado" && r.validado !== "Sí"
-        );
-      }, [rows]);
-
-      const riesgosAbiertos = useMemo(() => {
-        return rows.filter(r =>
-          r.impacto === "Riesgo" && r.estado !== "Cerrado"
-        );
-      }, [rows]);
-
-      const vencidos = useMemo(() => {
-        return rows.filter(r =>
-          r.estado !== "Cerrado" &&
-          r.fechaCompromiso &&
-          isPast(r.fechaCompromiso)
-        );
-      }, [rows]);
-
-      const costoAbierto = useMemo(() => {
-        return rows.filter(r =>
-          (r.tipo === "Contratación" ||
-           r.tipo === "Salida de personal" ||
-           r.tipo === "Cambio operativo") &&
-          r.impacto === "Aumenta costo" &&
-          r.estado !== "Cerrado"
-        );
-      }, [rows]);
-
-      const montoListoCobro = useMemo(() => {
-        return listosCobro.reduce((acc, r) => acc + Number(r.montoEstimado || 0), 0);
-      }, [listosCobro]);
-
-      const filteredRows = useMemo(() => {
-        let data = [...rows];
-
-        if (filtro.texto.trim()) {
-          const q = filtro.texto.toLowerCase();
-          data = data.filter(r =>
-            [
-              r.empresa,
-              r.area,
-              r.descripcion,
-              r.responsable,
-              r.tipo,
-              r.impacto
-            ].join(" ").toLowerCase().includes(q)
-          );
-        }
-
-        if (filtro.tipo) {
-          data = data.filter(r => r.tipo === filtro.tipo);
-        }
-
-        if (filtro.impacto) {
-          data = data.filter(r => r.impacto === filtro.impacto);
-        }
-
-        if (filtro.estado) {
-          data = data.filter(r => r.estado === filtro.estado);
-        }
-
-        if (filtro.mes) {
-          data = data.filter(r =>
-            isThisMonth(r.fecha, filtro.mes) ||
-            isThisMonth(r.mesCobro, filtro.mes)
-          );
-        }
-
-        if (filtro.alerta === "cobro") {
-          data = data.filter(r =>
-            r.cobrable === "Sí" &&
-            (r.estado === "Cerrado" || r.estado === "Ejecutado") &&
-            r.validado === "Sí" &&
-            r.pasadoEDP !== "Sí"
-          );
-        }
-
-        if (filtro.alerta === "sinValidar") {
-          data = data.filter(r =>
-            r.estado === "Ejecutado" && r.validado !== "Sí"
-          );
-        }
-
-        if (filtro.alerta === "riesgo") {
-          data = data.filter(r =>
-            r.impacto === "Riesgo" && r.estado !== "Cerrado"
-          );
-        }
-
-        if (filtro.alerta === "vencidos") {
-          data = data.filter(r =>
-            r.estado !== "Cerrado" &&
-            r.fechaCompromiso &&
-            isPast(r.fechaCompromiso)
-          );
-        }
-
-        if (filtro.alerta === "costo") {
-          data = data.filter(r =>
-            (r.tipo === "Contratación" ||
-             r.tipo === "Salida de personal" ||
-             r.tipo === "Cambio operativo") &&
-            r.impacto === "Aumenta costo" &&
-            r.estado !== "Cerrado"
-          );
-        }
-
-        return data;
-      }, [rows, filtro]);
-
-      function exportJSON() {
-        const blob = new Blob([JSON.stringify(rows, null, 2)], {
-          type: "application/json;charset=utf-8"
-        });
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = "bitacora_operativa.json";
-        a.click();
-        URL.revokeObjectURL(a.href);
-      }
-
       function exportCSV() {
         const headers = [
-          "ID",
-          "Fecha",
-          "Tipo",
-          "Empresa",
-          "Área",
-          "Descripción",
-          "Impacto",
-          "Responsable",
-          "Estado",
-          "Fecha compromiso",
-          "Validado",
-          "Cobrable",
-          "Pasado a EDP",
-          "Mes cobro",
-          "Monto estimado"
+          "ID","Fecha","Tipo","Empresa","Área","Descripción","Impacto","Responsable",
+          "Estado","Fecha compromiso","Validado","Cobrable","Pasado a EDP","Mes cobro","Monto estimado"
         ];
 
         const lines = rows.map(r => [
-          r.id,
-          r.fecha,
-          r.tipo,
-          r.empresa,
-          r.area,
-          r.descripcion,
-          r.impacto,
-          r.responsable,
-          r.estado,
-          r.fechaCompromiso,
-          r.validado,
-          r.cobrable,
-          r.pasadoEDP,
-          r.mesCobro,
-          r.montoEstimado
+          r.id, r.fecha, r.tipo, r.empresa, r.area, r.descripcion, r.impacto, r.responsable,
+          r.estado, r.fechaCompromiso, r.validado, r.cobrable, r.pasadoEDP, r.mesCobro, r.montoEstimado
         ]);
 
         const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
         const csv = [headers.map(esc).join(";"), ...lines.map(row => row.map(esc).join(";"))].join("\n");
-
-        const blob = new Blob(["\uFEFF" + csv], {
-          type: "text/csv;charset=utf-8;"
-        });
+        const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
-        a.download = "bitacora_operativa.csv";
+        a.download = "bitacora_operativa_v2.csv";
         a.click();
         URL.revokeObjectURL(a.href);
       }
@@ -397,6 +360,79 @@
         setRows([]);
       }
 
+      const enriched = useMemo(() => {
+        return rows.map(r => ({
+          ...r,
+          attention: getAttentionRule(r)
+        }));
+      }, [rows]);
+
+      const summary = useMemo(() => {
+        const cobro = enriched.filter(r => r.attention?.bucket === "cobro");
+        const validacion = enriched.filter(r => r.attention?.bucket === "validacion");
+        const riesgo = enriched.filter(r => r.attention?.bucket === "riesgo");
+        const vencido = enriched.filter(r => r.attention?.bucket === "vencido");
+        const costo = enriched.filter(r => r.attention?.bucket === "costo");
+        const comercial = enriched.filter(r => r.attention?.bucket === "comercial");
+
+        return {
+          cobro,
+          validacion,
+          riesgo,
+          vencido,
+          costo,
+          comercial,
+          montoCobro: cobro.reduce((acc, r) => acc + Number(r.montoEstimado || 0), 0)
+        };
+      }, [enriched]);
+
+      const attentionList = useMemo(() => {
+        let data = enriched.filter(r => r.attention);
+
+        if (attentionFilter) {
+          data = data.filter(r => r.attention.bucket === attentionFilter);
+        }
+
+        data.sort((a, b) => {
+          const aHigh = a.attention?.prioridad === "alta" ? 1 : 0;
+          const bHigh = b.attention?.prioridad === "alta" ? 1 : 0;
+          if (aHigh !== bHigh) return bHigh - aHigh;
+          return String(b.fecha).localeCompare(String(a.fecha));
+        });
+
+        return data;
+      }, [enriched, attentionFilter]);
+
+      const historyRows = useMemo(() => {
+        let data = [...enriched];
+
+        if (textFilter.trim()) {
+          const q = textFilter.toLowerCase();
+          data = data.filter(r =>
+            [
+              r.tipo, r.empresa, r.area, r.descripcion, r.impacto, r.responsable
+            ].join(" ").toLowerCase().includes(q)
+          );
+        }
+
+        if (monthFilter) {
+          data = data.filter(r =>
+            getMonthKey(r.fecha) === monthFilter || getMonthKey(r.mesCobro) === monthFilter
+          );
+        }
+
+        if (typeFilter) {
+          data = data.filter(r => r.tipo === typeFilter);
+        }
+
+        if (statusFilter) {
+          data = data.filter(r => r.estado === statusFilter);
+        }
+
+        data.sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
+        return data;
+      }, [enriched, textFilter, monthFilter, typeFilter, statusFilter]);
+
       return (
         <div className="min-h-full">
           <div className="border-b bg-white">
@@ -405,7 +441,7 @@
                 <div>
                   <h1 className="text-2xl font-bold">Bitácora Operativa</h1>
                   <p className="text-sm text-slate-600">
-                    Registro personal con alertas para control, seguimiento y cobro.
+                    Registro personal con foco en seguimiento, riesgos, validación y cobro.
                   </p>
                 </div>
 
@@ -415,12 +451,6 @@
                     className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-50"
                   >
                     Exportar CSV
-                  </button>
-                  <button
-                    onClick={exportJSON}
-                    className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-50"
-                  >
-                    Exportar JSON
                   </button>
                   <button
                     onClick={clearAll}
@@ -433,48 +463,76 @@
             </div>
           </div>
 
-          <div className="mx-auto max-w-7xl p-4 space-y-4">
+          <div className="mx-auto max-w-7xl p-4 space-y-5">
 
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
-              <HeaderCard
-                title="Listos para cobro"
-                value={listosCobro.length}
-                sub={montoListoCobro ? formatCLP(montoListoCobro) : "Sin monto"}
-                tone="green"
-                onClick={() => setAlertFilter("cobro")}
-              />
-              <HeaderCard
-                title="Ejecutados sin validar"
-                value={ejecutadosSinValidar.length}
-                sub="Requieren respaldo"
-                tone="amber"
-                onClick={() => setAlertFilter("sinValidar")}
-              />
-              <HeaderCard
-                title="Riesgos abiertos"
-                value={riesgosAbiertos.length}
-                sub="Impacto no cerrado"
-                tone="red"
-                onClick={() => setAlertFilter("riesgo")}
-              />
-              <HeaderCard
-                title="Vencidos"
-                value={vencidos.length}
-                sub="Con fecha compromiso pasada"
-                tone="slate"
-                onClick={() => setAlertFilter("vencidos")}
-              />
-              <HeaderCard
-                title="Costo abierto"
-                value={costoAbierto.length}
-                sub="Impacto en costo pendiente"
-                tone="blue"
-                onClick={() => setAlertFilter("costo")}
-              />
-            </div>
+            <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="mb-4">
+                <h2 className="text-lg font-semibold">Resumen de atención</h2>
+                <p className="text-sm text-slate-600">
+                  Esto es lo que requiere mirada inmediata. Haz clic en una tarjeta para filtrar la bandeja.
+                </p>
+              </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <h2 className="mb-4 text-lg font-semibold">Nuevo registro</h2>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3 xl:grid-cols-6">
+                <SummaryCard
+                  title="Para cobrar"
+                  value={summary.cobro.length}
+                  detail="Casos listos para pasar a EDP"
+                  amount={summary.montoCobro > 0 ? formatCLP(summary.montoCobro) : ""}
+                  tone="green"
+                  active={attentionFilter === "cobro"}
+                  onClick={() => setAttentionFilter(attentionFilter === "cobro" ? "" : "cobro")}
+                />
+                <SummaryCard
+                  title="Sin validar"
+                  value={summary.validacion.length}
+                  detail="Ejecutados sin respaldo"
+                  tone="amber"
+                  active={attentionFilter === "validacion"}
+                  onClick={() => setAttentionFilter(attentionFilter === "validacion" ? "" : "validacion")}
+                />
+                <SummaryCard
+                  title="Riesgos abiertos"
+                  value={summary.riesgo.length}
+                  detail="Casos con impacto no cerrado"
+                  tone="red"
+                  active={attentionFilter === "riesgo"}
+                  onClick={() => setAttentionFilter(attentionFilter === "riesgo" ? "" : "riesgo")}
+                />
+                <SummaryCard
+                  title="Vencidos"
+                  value={summary.vencido.length}
+                  detail="Compromisos fuera de plazo"
+                  tone="slate"
+                  active={attentionFilter === "vencido"}
+                  onClick={() => setAttentionFilter(attentionFilter === "vencido" ? "" : "vencido")}
+                />
+                <SummaryCard
+                  title="Impacto en costo"
+                  value={summary.costo.length}
+                  detail="Movimientos abiertos con costo"
+                  tone="blue"
+                  active={attentionFilter === "costo"}
+                  onClick={() => setAttentionFilter(attentionFilter === "costo" ? "" : "costo")}
+                />
+                <SummaryCard
+                  title="Inicio sin cobro"
+                  value={summary.comercial.length}
+                  detail="Servicio iniciado sin cierre comercial"
+                  tone="violet"
+                  active={attentionFilter === "comercial"}
+                  onClick={() => setAttentionFilter(attentionFilter === "comercial" ? "" : "comercial")}
+                />
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="mb-4">
+                <h2 className="text-lg font-semibold">Nuevo registro</h2>
+                <p className="text-sm text-slate-600">
+                  Registra el hecho una sola vez. El sistema decide si debe quedar en atención.
+                </p>
+              </div>
 
               <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
                 <div>
@@ -519,13 +577,13 @@
                 </div>
 
                 <div className="md:col-span-4">
-                  <label className="mb-1 block text-sm font-medium">Descripción</label>
+                  <label className="mb-1 block text-sm font-medium">Solicitud / situación</label>
                   <textarea
                     rows="3"
                     value={form.descripcion}
                     onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
                     className="w-full rounded-xl border border-slate-300 px-3 py-2"
-                    placeholder="Describe qué pasó, qué se pidió o qué impacta."
+                    placeholder="Ej. Se solicitó aseo adicional en casino. Ejecutado el 20/03, pendiente validación de administrador."
                   />
                 </div>
 
@@ -624,7 +682,6 @@
                 >
                   Guardar registro
                 </button>
-
                 <button
                   onClick={resetForm}
                   className="rounded-xl border border-slate-300 bg-white px-4 py-2 font-medium hover:bg-slate-50"
@@ -632,34 +689,148 @@
                   Limpiar
                 </button>
               </div>
-            </div>
+            </section>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+            <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                 <div>
-                  <h2 className="text-lg font-semibold">Registros</h2>
+                  <h2 className="text-lg font-semibold">Atención inmediata</h2>
                   <p className="text-sm text-slate-600">
-                    Usa filtros para revisar cobros, riesgos, validaciones o vencimientos.
+                    Esta es la bandeja útil. Aquí están los casos que requieren seguimiento real.
                   </p>
                 </div>
+
+                {attentionFilter && (
+                  <button
+                    onClick={() => setAttentionFilter("")}
+                    className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-50"
+                  >
+                    Quitar filtro de atención
+                  </button>
+                )}
               </div>
 
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
+              {attentionList.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-300 p-8 text-center text-slate-500">
+                  No hay casos que requieran atención inmediata con el filtro actual.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {attentionList.map(r => {
+                    const a = r.attention;
+                    return (
+                      <div key={r.id} className={"rounded-2xl border p-4 shadow-sm " + colorMap(a.color)}>
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                          <div className="min-w-0 flex-1">
+                            <div className="mb-2 flex flex-wrap items-center gap-2">
+                              <span className={"rounded-full px-2.5 py-1 text-xs font-semibold " + badgeMap(a.color)}>
+                                {a.titulo}
+                              </span>
+                              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
+                                {r.tipo}
+                              </span>
+                              <span className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-slate-700 border border-slate-200">
+                                {r.empresa || "Sin empresa"}
+                              </span>
+                              <span className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-slate-700 border border-slate-200">
+                                {r.area || "Sin área"}
+                              </span>
+                            </div>
+
+                            <div className="text-base font-semibold text-slate-900">
+                              {r.descripcion}
+                            </div>
+
+                            <div className="mt-2 text-sm text-slate-700">
+                              <b>Atención:</b> {a.mensaje}
+                            </div>
+
+                            <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-slate-700 md:grid-cols-2 xl:grid-cols-5">
+                              <div><b>Fecha:</b> {r.fecha || "-"}</div>
+                              <div><b>Estado:</b> {r.estado || "-"}</div>
+                              <div><b>Responsable:</b> {r.responsable || "-"}</div>
+                              <div><b>Compromiso:</b> {r.fechaCompromiso || "-"}</div>
+                              <div><b>Monto:</b> {r.montoEstimado ? formatCLP(r.montoEstimado) : "-"}</div>
+                            </div>
+                          </div>
+
+                          <div className="flex w-full flex-col gap-2 lg:w-56">
+                            {a.bucket === "validacion" && (
+                              <button
+                                onClick={() => updateRow(r.id, "validado", "Sí")}
+                                className="rounded-xl bg-amber-600 px-3 py-2 text-sm font-medium text-white hover:bg-amber-700"
+                              >
+                                Marcar validado
+                              </button>
+                            )}
+
+                            {a.bucket === "cobro" && (
+                              <button
+                                onClick={() => updateRow(r.id, "pasadoEDP", "Sí")}
+                                className="rounded-xl bg-green-600 px-3 py-2 text-sm font-medium text-white hover:bg-green-700"
+                              >
+                                Pasar a EDP
+                              </button>
+                            )}
+
+                            {(a.bucket === "vencido" || a.bucket === "proximo" || a.bucket === "riesgo" || a.bucket === "costo" || a.bucket === "comercial") && (
+                              <button
+                                onClick={() => updateRow(r.id, "estado", "En gestión")}
+                                className="rounded-xl bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-900"
+                              >
+                                Marcar en gestión
+                              </button>
+                            )}
+
+                            <button
+                              onClick={() => updateRow(r.id, "estado", "Cerrado")}
+                              className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-50"
+                            >
+                              Cerrar caso
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+
+            <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="mb-4">
+                <h2 className="text-lg font-semibold">Historial</h2>
+                <p className="text-sm text-slate-600">
+                  Usa esta tabla para buscar, revisar y editar el detalle. No es la vista principal.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
                 <div>
                   <label className="mb-1 block text-sm font-medium">Buscar</label>
                   <input
-                    value={filtro.texto}
-                    onChange={(e) => setFiltro({ ...filtro, texto: e.target.value })}
+                    value={textFilter}
+                    onChange={(e) => setTextFilter(e.target.value)}
                     className="w-full rounded-xl border border-slate-300 px-3 py-2"
-                    placeholder="Empresa, área, descripción..."
+                    placeholder="Empresa, área, solicitud..."
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Mes</label>
+                  <input
+                    type="month"
+                    value={monthFilter}
+                    onChange={(e) => setMonthFilter(e.target.value)}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
                   />
                 </div>
 
                 <div>
                   <label className="mb-1 block text-sm font-medium">Tipo</label>
                   <select
-                    value={filtro.tipo}
-                    onChange={(e) => setFiltro({ ...filtro, tipo: e.target.value })}
+                    value={typeFilter}
+                    onChange={(e) => setTypeFilter(e.target.value)}
                     className="w-full rounded-xl border border-slate-300 px-3 py-2"
                   >
                     <option value="">Todos</option>
@@ -668,64 +839,41 @@
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-sm font-medium">Impacto</label>
-                  <select
-                    value={filtro.impacto}
-                    onChange={(e) => setFiltro({ ...filtro, impacto: e.target.value })}
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
-                  >
-                    <option value="">Todos</option>
-                    {IMPACTOS.map(x => <option key={x}>{x}</option>)}
-                  </select>
-                </div>
-
-                <div>
                   <label className="mb-1 block text-sm font-medium">Estado</label>
                   <select
-                    value={filtro.estado}
-                    onChange={(e) => setFiltro({ ...filtro, estado: e.target.value })}
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value)}
                     className="w-full rounded-xl border border-slate-300 px-3 py-2"
                   >
                     <option value="">Todos</option>
                     {ESTADOS.map(x => <option key={x}>{x}</option>)}
                   </select>
                 </div>
-
-                <div>
-                  <label className="mb-1 block text-sm font-medium">Mes</label>
-                  <input
-                    type="month"
-                    value={filtro.mes}
-                    onChange={(e) => setFiltro({ ...filtro, mes: e.target.value })}
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
-                  />
-                </div>
               </div>
 
-              <div className="mt-3 flex flex-wrap gap-2">
+              <div className="mt-3">
                 <button
-                  onClick={() => setFiltro({ texto: "", tipo: "", impacto: "", estado: "", mes: "", alerta: "" })}
+                  onClick={() => {
+                    setTextFilter("");
+                    setMonthFilter("");
+                    setTypeFilter("");
+                    setStatusFilter("");
+                  }}
                   className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-50"
                 >
                   Limpiar filtros
                 </button>
-
-                {filtro.alerta && (
-                  <span className="rounded-xl bg-slate-100 px-3 py-2 text-sm text-slate-700">
-                    Filtro alerta activo: <b>{filtro.alerta}</b>
-                  </span>
-                )}
               </div>
 
               <div className="mt-4 overflow-auto">
-                <table className="min-w-[1500px] w-full border-collapse text-sm">
+                <table className="min-w-[1400px] w-full text-sm">
                   <thead>
                     <tr className="border-b bg-slate-50 text-left">
                       <th className="p-2">Fecha</th>
                       <th className="p-2">Tipo</th>
                       <th className="p-2">Empresa</th>
                       <th className="p-2">Área</th>
-                      <th className="p-2">Descripción</th>
+                      <th className="p-2">Solicitud / situación</th>
                       <th className="p-2">Impacto</th>
                       <th className="p-2">Responsable</th>
                       <th className="p-2">Estado</th>
@@ -735,20 +883,18 @@
                       <th className="p-2">EDP</th>
                       <th className="p-2">Mes cobro</th>
                       <th className="p-2">Monto</th>
+                      <th className="p-2">Atención</th>
                       <th className="p-2">Acciones</th>
                     </tr>
                   </thead>
-
                   <tbody>
-                    {filteredRows.length === 0 && (
+                    {historyRows.length === 0 ? (
                       <tr>
-                        <td colSpan="15" className="p-6 text-center text-slate-500">
+                        <td colSpan="16" className="p-6 text-center text-slate-500">
                           No hay registros para los filtros actuales.
                         </td>
                       </tr>
-                    )}
-
-                    {filteredRows.map((r) => (
+                    ) : historyRows.map(r => (
                       <tr key={r.id} className="border-b align-top">
                         <td className="p-2">
                           <input
@@ -758,7 +904,6 @@
                             className="w-full rounded-lg border border-slate-300 px-2 py-1"
                           />
                         </td>
-
                         <td className="p-2">
                           <select
                             value={r.tipo}
@@ -768,7 +913,6 @@
                             {TIPOS.map(x => <option key={x}>{x}</option>)}
                           </select>
                         </td>
-
                         <td className="p-2">
                           <input
                             value={r.empresa || ""}
@@ -776,7 +920,6 @@
                             className="w-full rounded-lg border border-slate-300 px-2 py-1"
                           />
                         </td>
-
                         <td className="p-2">
                           <input
                             value={r.area || ""}
@@ -784,16 +927,14 @@
                             className="w-full rounded-lg border border-slate-300 px-2 py-1"
                           />
                         </td>
-
                         <td className="p-2">
                           <textarea
-                            rows="2"
+                            rows="3"
                             value={r.descripcion || ""}
                             onChange={(e) => updateRow(r.id, "descripcion", e.target.value)}
                             className="w-full rounded-lg border border-slate-300 px-2 py-1"
                           />
                         </td>
-
                         <td className="p-2">
                           <select
                             value={r.impacto}
@@ -803,7 +944,6 @@
                             {IMPACTOS.map(x => <option key={x}>{x}</option>)}
                           </select>
                         </td>
-
                         <td className="p-2">
                           <input
                             value={r.responsable || ""}
@@ -811,7 +951,6 @@
                             className="w-full rounded-lg border border-slate-300 px-2 py-1"
                           />
                         </td>
-
                         <td className="p-2">
                           <select
                             value={r.estado}
@@ -821,7 +960,6 @@
                             {ESTADOS.map(x => <option key={x}>{x}</option>)}
                           </select>
                         </td>
-
                         <td className="p-2">
                           <input
                             type="date"
@@ -835,7 +973,6 @@
                             }
                           />
                         </td>
-
                         <td className="p-2">
                           <select
                             value={r.validado}
@@ -846,7 +983,6 @@
                             <option>Sí</option>
                           </select>
                         </td>
-
                         <td className="p-2">
                           <select
                             value={r.cobrable}
@@ -857,7 +993,6 @@
                             <option>No</option>
                           </select>
                         </td>
-
                         <td className="p-2">
                           <select
                             value={r.pasadoEDP}
@@ -868,7 +1003,6 @@
                             <option>Sí</option>
                           </select>
                         </td>
-
                         <td className="p-2">
                           <input
                             type="month"
@@ -877,7 +1011,6 @@
                             className="w-full rounded-lg border border-slate-300 px-2 py-1"
                           />
                         </td>
-
                         <td className="p-2">
                           <input
                             type="number"
@@ -889,36 +1022,32 @@
                             {r.montoEstimado ? formatCLP(r.montoEstimado) : ""}
                           </div>
                         </td>
-
+                        <td className="p-2">
+                          {r.attention ? (
+                            <div className={"rounded-lg px-2 py-1 text-xs font-semibold " + badgeMap(r.attention.color)}>
+                              {r.attention.titulo}
+                            </div>
+                          ) : (
+                            <span className="text-xs text-slate-400">Sin alerta</span>
+                          )}
+                        </td>
                         <td className="p-2">
                           <div className="flex flex-col gap-2">
                             <button
-                              onClick={() => updateRow(r.id, "validado", "Sí")}
-                              className="rounded-lg bg-amber-100 px-2 py-1 text-left text-amber-900 hover:bg-amber-200"
+                              onClick={() => updateRow(r.id, "estado", "En gestión")}
+                              className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-left hover:bg-slate-50"
                             >
-                              Marcar validado
+                              En gestión
                             </button>
-
                             <button
-                              onClick={() => {
-                                updateRow(r.id, "estado", "Ejecutado");
-                                updateRow(r.id, "pasadoEDP", "No");
-                              }}
-                              className="rounded-lg bg-sky-100 px-2 py-1 text-left text-sky-900 hover:bg-sky-200"
+                              onClick={() => updateRow(r.id, "estado", "Cerrado")}
+                              className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-left hover:bg-slate-50"
                             >
-                              Marcar ejecutado
+                              Cerrar
                             </button>
-
-                            <button
-                              onClick={() => updateRow(r.id, "pasadoEDP", "Sí")}
-                              className="rounded-lg bg-green-100 px-2 py-1 text-left text-green-900 hover:bg-green-200"
-                            >
-                              Pasar a EDP
-                            </button>
-
                             <button
                               onClick={() => deleteRow(r.id)}
-                              className="rounded-lg bg-red-100 px-2 py-1 text-left text-red-900 hover:bg-red-200"
+                              className="rounded-lg bg-red-100 px-2 py-1 text-left text-red-800 hover:bg-red-200"
                             >
                               Eliminar
                             </button>
@@ -929,7 +1058,7 @@
                   </tbody>
                 </table>
               </div>
-            </div>
+            </section>
 
           </div>
         </div>
