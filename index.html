@@ -1,0 +1,942 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bitácora Operativa</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    html, body, #root { height: 100%; }
+    body { margin: 0; }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-900">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useEffect, useMemo, useState } = React;
+
+    const LS_KEY = "df_bitacora_operativa_v1";
+
+    const TIPOS = [
+      "Inicio de servicio",
+      "Servicio adicional",
+      "Contratación",
+      "Salida de personal",
+      "Cambio operativo",
+      "Instrucción del mandante",
+      "Incidencia",
+      "Tema comercial"
+    ];
+
+    const IMPACTOS = [
+      "Aumenta ingreso",
+      "Aumenta costo",
+      "Riesgo",
+      "Neutro"
+    ];
+
+    const ESTADOS = [
+      "Abierto",
+      "En gestión",
+      "Ejecutado",
+      "Cerrado"
+    ];
+
+    function readLS() {
+      try {
+        return JSON.parse(localStorage.getItem(LS_KEY) || "[]");
+      } catch {
+        return [];
+      }
+    }
+
+    function writeLS(data) {
+      localStorage.setItem(LS_KEY, JSON.stringify(data));
+    }
+
+    function formatCLP(value) {
+      const n = Number(value || 0);
+      return n.toLocaleString("es-CL", {
+        style: "currency",
+        currency: "CLP",
+        maximumFractionDigits: 0
+      });
+    }
+
+    function todayISO() {
+      return new Date().toISOString().slice(0, 10);
+    }
+
+    function isPast(dateStr) {
+      if (!dateStr) return false;
+      const d = new Date(dateStr + "T00:00:00");
+      const now = new Date();
+      const t = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      return d < t;
+    }
+
+    function isThisMonth(dateStr, monthKey) {
+      if (!monthKey) return true;
+      return (dateStr || "").slice(0, 7) === monthKey;
+    }
+
+    function HeaderCard({ title, value, sub, tone = "slate", onClick }) {
+      const tones = {
+        green: "bg-green-50 border-green-200 text-green-900",
+        amber: "bg-amber-50 border-amber-200 text-amber-900",
+        red: "bg-red-50 border-red-200 text-red-900",
+        blue: "bg-blue-50 border-blue-200 text-blue-900",
+        slate: "bg-white border-slate-200 text-slate-900"
+      };
+
+      return (
+        <button
+          onClick={onClick}
+          className={
+            "w-full rounded-2xl border p-4 text-left shadow-sm transition hover:shadow " +
+            tones[tone]
+          }
+          type="button"
+        >
+          <div className="text-sm font-medium opacity-80">{title}</div>
+          <div className="mt-1 text-3xl font-bold">{value}</div>
+          <div className="mt-1 text-sm opacity-80">{sub}</div>
+        </button>
+      );
+    }
+
+    function App() {
+      const [rows, setRows] = useState(() => readLS());
+
+      const [form, setForm] = useState({
+        fecha: todayISO(),
+        tipo: "Servicio adicional",
+        empresa: "",
+        area: "",
+        descripcion: "",
+        impacto: "Aumenta ingreso",
+        responsable: "",
+        estado: "Abierto",
+        fechaCompromiso: "",
+        validado: "No",
+        cobrable: "Sí",
+        pasadoEDP: "No",
+        mesCobro: todayISO().slice(0, 7),
+        montoEstimado: ""
+      });
+
+      const [filtro, setFiltro] = useState({
+        texto: "",
+        tipo: "",
+        impacto: "",
+        estado: "",
+        mes: "",
+        alerta: ""
+      });
+
+      useEffect(() => {
+        writeLS(rows);
+      }, [rows]);
+
+      function resetForm() {
+        setForm({
+          fecha: todayISO(),
+          tipo: "Servicio adicional",
+          empresa: "",
+          area: "",
+          descripcion: "",
+          impacto: "Aumenta ingreso",
+          responsable: "",
+          estado: "Abierto",
+          fechaCompromiso: "",
+          validado: "No",
+          cobrable: "Sí",
+          pasadoEDP: "No",
+          mesCobro: todayISO().slice(0, 7),
+          montoEstimado: ""
+        });
+      }
+
+      function addRow() {
+        const descripcion = form.descripcion.trim();
+        if (!descripcion) {
+          alert("Debes ingresar una descripción.");
+          return;
+        }
+
+        const newRow = {
+          id: Date.now(),
+          fecha: form.fecha || todayISO(),
+          tipo: form.tipo,
+          empresa: form.empresa.trim(),
+          area: form.area.trim(),
+          descripcion,
+          impacto: form.impacto,
+          responsable: form.responsable.trim(),
+          estado: form.estado,
+          fechaCompromiso: form.fechaCompromiso || "",
+          validado: form.validado,
+          cobrable: form.cobrable,
+          pasadoEDP: form.pasadoEDP,
+          mesCobro: form.mesCobro || "",
+          montoEstimado: form.montoEstimado === "" ? "" : Number(form.montoEstimado)
+        };
+
+        setRows(prev => [newRow, ...prev]);
+        resetForm();
+      }
+
+      function updateRow(id, field, value) {
+        setRows(prev =>
+          prev.map(r => (r.id === id ? { ...r, [field]: value } : r))
+        );
+      }
+
+      function deleteRow(id) {
+        if (!confirm("¿Eliminar este registro?")) return;
+        setRows(prev => prev.filter(r => r.id !== id));
+      }
+
+      function setAlertFilter(name) {
+        setFiltro(prev => ({
+          ...prev,
+          alerta: prev.alerta === name ? "" : name
+        }));
+      }
+
+      const listosCobro = useMemo(() => {
+        return rows.filter(r =>
+          r.cobrable === "Sí" &&
+          (r.estado === "Cerrado" || r.estado === "Ejecutado") &&
+          r.validado === "Sí" &&
+          r.pasadoEDP !== "Sí"
+        );
+      }, [rows]);
+
+      const ejecutadosSinValidar = useMemo(() => {
+        return rows.filter(r =>
+          r.estado === "Ejecutado" && r.validado !== "Sí"
+        );
+      }, [rows]);
+
+      const riesgosAbiertos = useMemo(() => {
+        return rows.filter(r =>
+          r.impacto === "Riesgo" && r.estado !== "Cerrado"
+        );
+      }, [rows]);
+
+      const vencidos = useMemo(() => {
+        return rows.filter(r =>
+          r.estado !== "Cerrado" &&
+          r.fechaCompromiso &&
+          isPast(r.fechaCompromiso)
+        );
+      }, [rows]);
+
+      const costoAbierto = useMemo(() => {
+        return rows.filter(r =>
+          (r.tipo === "Contratación" ||
+           r.tipo === "Salida de personal" ||
+           r.tipo === "Cambio operativo") &&
+          r.impacto === "Aumenta costo" &&
+          r.estado !== "Cerrado"
+        );
+      }, [rows]);
+
+      const montoListoCobro = useMemo(() => {
+        return listosCobro.reduce((acc, r) => acc + Number(r.montoEstimado || 0), 0);
+      }, [listosCobro]);
+
+      const filteredRows = useMemo(() => {
+        let data = [...rows];
+
+        if (filtro.texto.trim()) {
+          const q = filtro.texto.toLowerCase();
+          data = data.filter(r =>
+            [
+              r.empresa,
+              r.area,
+              r.descripcion,
+              r.responsable,
+              r.tipo,
+              r.impacto
+            ].join(" ").toLowerCase().includes(q)
+          );
+        }
+
+        if (filtro.tipo) {
+          data = data.filter(r => r.tipo === filtro.tipo);
+        }
+
+        if (filtro.impacto) {
+          data = data.filter(r => r.impacto === filtro.impacto);
+        }
+
+        if (filtro.estado) {
+          data = data.filter(r => r.estado === filtro.estado);
+        }
+
+        if (filtro.mes) {
+          data = data.filter(r =>
+            isThisMonth(r.fecha, filtro.mes) ||
+            isThisMonth(r.mesCobro, filtro.mes)
+          );
+        }
+
+        if (filtro.alerta === "cobro") {
+          data = data.filter(r =>
+            r.cobrable === "Sí" &&
+            (r.estado === "Cerrado" || r.estado === "Ejecutado") &&
+            r.validado === "Sí" &&
+            r.pasadoEDP !== "Sí"
+          );
+        }
+
+        if (filtro.alerta === "sinValidar") {
+          data = data.filter(r =>
+            r.estado === "Ejecutado" && r.validado !== "Sí"
+          );
+        }
+
+        if (filtro.alerta === "riesgo") {
+          data = data.filter(r =>
+            r.impacto === "Riesgo" && r.estado !== "Cerrado"
+          );
+        }
+
+        if (filtro.alerta === "vencidos") {
+          data = data.filter(r =>
+            r.estado !== "Cerrado" &&
+            r.fechaCompromiso &&
+            isPast(r.fechaCompromiso)
+          );
+        }
+
+        if (filtro.alerta === "costo") {
+          data = data.filter(r =>
+            (r.tipo === "Contratación" ||
+             r.tipo === "Salida de personal" ||
+             r.tipo === "Cambio operativo") &&
+            r.impacto === "Aumenta costo" &&
+            r.estado !== "Cerrado"
+          );
+        }
+
+        return data;
+      }, [rows, filtro]);
+
+      function exportJSON() {
+        const blob = new Blob([JSON.stringify(rows, null, 2)], {
+          type: "application/json;charset=utf-8"
+        });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "bitacora_operativa.json";
+        a.click();
+        URL.revokeObjectURL(a.href);
+      }
+
+      function exportCSV() {
+        const headers = [
+          "ID",
+          "Fecha",
+          "Tipo",
+          "Empresa",
+          "Área",
+          "Descripción",
+          "Impacto",
+          "Responsable",
+          "Estado",
+          "Fecha compromiso",
+          "Validado",
+          "Cobrable",
+          "Pasado a EDP",
+          "Mes cobro",
+          "Monto estimado"
+        ];
+
+        const lines = rows.map(r => [
+          r.id,
+          r.fecha,
+          r.tipo,
+          r.empresa,
+          r.area,
+          r.descripcion,
+          r.impacto,
+          r.responsable,
+          r.estado,
+          r.fechaCompromiso,
+          r.validado,
+          r.cobrable,
+          r.pasadoEDP,
+          r.mesCobro,
+          r.montoEstimado
+        ]);
+
+        const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+        const csv = [headers.map(esc).join(";"), ...lines.map(row => row.map(esc).join(";"))].join("\n");
+
+        const blob = new Blob(["\uFEFF" + csv], {
+          type: "text/csv;charset=utf-8;"
+        });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "bitacora_operativa.csv";
+        a.click();
+        URL.revokeObjectURL(a.href);
+      }
+
+      function clearAll() {
+        if (!confirm("¿Seguro que quieres borrar toda la bitácora?")) return;
+        setRows([]);
+      }
+
+      return (
+        <div className="min-h-full">
+          <div className="border-b bg-white">
+            <div className="mx-auto max-w-7xl px-4 py-4">
+              <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                <div>
+                  <h1 className="text-2xl font-bold">Bitácora Operativa</h1>
+                  <p className="text-sm text-slate-600">
+                    Registro personal con alertas para control, seguimiento y cobro.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={exportCSV}
+                    className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-50"
+                  >
+                    Exportar CSV
+                  </button>
+                  <button
+                    onClick={exportJSON}
+                    className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-50"
+                  >
+                    Exportar JSON
+                  </button>
+                  <button
+                    onClick={clearAll}
+                    className="rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-100"
+                  >
+                    Vaciar todo
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mx-auto max-w-7xl p-4 space-y-4">
+
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
+              <HeaderCard
+                title="Listos para cobro"
+                value={listosCobro.length}
+                sub={montoListoCobro ? formatCLP(montoListoCobro) : "Sin monto"}
+                tone="green"
+                onClick={() => setAlertFilter("cobro")}
+              />
+              <HeaderCard
+                title="Ejecutados sin validar"
+                value={ejecutadosSinValidar.length}
+                sub="Requieren respaldo"
+                tone="amber"
+                onClick={() => setAlertFilter("sinValidar")}
+              />
+              <HeaderCard
+                title="Riesgos abiertos"
+                value={riesgosAbiertos.length}
+                sub="Impacto no cerrado"
+                tone="red"
+                onClick={() => setAlertFilter("riesgo")}
+              />
+              <HeaderCard
+                title="Vencidos"
+                value={vencidos.length}
+                sub="Con fecha compromiso pasada"
+                tone="slate"
+                onClick={() => setAlertFilter("vencidos")}
+              />
+              <HeaderCard
+                title="Costo abierto"
+                value={costoAbierto.length}
+                sub="Impacto en costo pendiente"
+                tone="blue"
+                onClick={() => setAlertFilter("costo")}
+              />
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <h2 className="mb-4 text-lg font-semibold">Nuevo registro</h2>
+
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Fecha</label>
+                  <input
+                    type="date"
+                    value={form.fecha}
+                    onChange={(e) => setForm({ ...form, fecha: e.target.value })}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Tipo</label>
+                  <select
+                    value={form.tipo}
+                    onChange={(e) => setForm({ ...form, tipo: e.target.value })}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                  >
+                    {TIPOS.map(x => <option key={x}>{x}</option>)}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Empresa</label>
+                  <input
+                    value={form.empresa}
+                    onChange={(e) => setForm({ ...form, empresa: e.target.value })}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                    placeholder="Ej. Codelco / EECC"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Área</label>
+                  <input
+                    value={form.area}
+                    onChange={(e) => setForm({ ...form, area: e.target.value })}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                    placeholder="Ej. Aseo / Hotelería / Casino"
+                  />
+                </div>
+
+                <div className="md:col-span-4">
+                  <label className="mb-1 block text-sm font-medium">Descripción</label>
+                  <textarea
+                    rows="3"
+                    value={form.descripcion}
+                    onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                    placeholder="Describe qué pasó, qué se pidió o qué impacta."
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Impacto</label>
+                  <select
+                    value={form.impacto}
+                    onChange={(e) => setForm({ ...form, impacto: e.target.value })}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                  >
+                    {IMPACTOS.map(x => <option key={x}>{x}</option>)}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Responsable</label>
+                  <input
+                    value={form.responsable}
+                    onChange={(e) => setForm({ ...form, responsable: e.target.value })}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                    placeholder="Nombre responsable"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Estado</label>
+                  <select
+                    value={form.estado}
+                    onChange={(e) => setForm({ ...form, estado: e.target.value })}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                  >
+                    {ESTADOS.map(x => <option key={x}>{x}</option>)}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Fecha compromiso</label>
+                  <input
+                    type="date"
+                    value={form.fechaCompromiso}
+                    onChange={(e) => setForm({ ...form, fechaCompromiso: e.target.value })}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Validado</label>
+                  <select
+                    value={form.validado}
+                    onChange={(e) => setForm({ ...form, validado: e.target.value })}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                  >
+                    <option>No</option>
+                    <option>Sí</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Cobrable</label>
+                  <select
+                    value={form.cobrable}
+                    onChange={(e) => setForm({ ...form, cobrable: e.target.value })}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                  >
+                    <option>Sí</option>
+                    <option>No</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Mes cobro</label>
+                  <input
+                    type="month"
+                    value={form.mesCobro}
+                    onChange={(e) => setForm({ ...form, mesCobro: e.target.value })}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Monto estimado</label>
+                  <input
+                    type="number"
+                    value={form.montoEstimado}
+                    onChange={(e) => setForm({ ...form, montoEstimado: e.target.value })}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                    placeholder="0"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  onClick={addRow}
+                  className="rounded-xl bg-slate-900 px-4 py-2 font-medium text-white hover:bg-slate-800"
+                >
+                  Guardar registro
+                </button>
+
+                <button
+                  onClick={resetForm}
+                  className="rounded-xl border border-slate-300 bg-white px-4 py-2 font-medium hover:bg-slate-50"
+                >
+                  Limpiar
+                </button>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold">Registros</h2>
+                  <p className="text-sm text-slate-600">
+                    Usa filtros para revisar cobros, riesgos, validaciones o vencimientos.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Buscar</label>
+                  <input
+                    value={filtro.texto}
+                    onChange={(e) => setFiltro({ ...filtro, texto: e.target.value })}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                    placeholder="Empresa, área, descripción..."
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Tipo</label>
+                  <select
+                    value={filtro.tipo}
+                    onChange={(e) => setFiltro({ ...filtro, tipo: e.target.value })}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                  >
+                    <option value="">Todos</option>
+                    {TIPOS.map(x => <option key={x}>{x}</option>)}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Impacto</label>
+                  <select
+                    value={filtro.impacto}
+                    onChange={(e) => setFiltro({ ...filtro, impacto: e.target.value })}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                  >
+                    <option value="">Todos</option>
+                    {IMPACTOS.map(x => <option key={x}>{x}</option>)}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Estado</label>
+                  <select
+                    value={filtro.estado}
+                    onChange={(e) => setFiltro({ ...filtro, estado: e.target.value })}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                  >
+                    <option value="">Todos</option>
+                    {ESTADOS.map(x => <option key={x}>{x}</option>)}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Mes</label>
+                  <input
+                    type="month"
+                    value={filtro.mes}
+                    onChange={(e) => setFiltro({ ...filtro, mes: e.target.value })}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  onClick={() => setFiltro({ texto: "", tipo: "", impacto: "", estado: "", mes: "", alerta: "" })}
+                  className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-50"
+                >
+                  Limpiar filtros
+                </button>
+
+                {filtro.alerta && (
+                  <span className="rounded-xl bg-slate-100 px-3 py-2 text-sm text-slate-700">
+                    Filtro alerta activo: <b>{filtro.alerta}</b>
+                  </span>
+                )}
+              </div>
+
+              <div className="mt-4 overflow-auto">
+                <table className="min-w-[1500px] w-full border-collapse text-sm">
+                  <thead>
+                    <tr className="border-b bg-slate-50 text-left">
+                      <th className="p-2">Fecha</th>
+                      <th className="p-2">Tipo</th>
+                      <th className="p-2">Empresa</th>
+                      <th className="p-2">Área</th>
+                      <th className="p-2">Descripción</th>
+                      <th className="p-2">Impacto</th>
+                      <th className="p-2">Responsable</th>
+                      <th className="p-2">Estado</th>
+                      <th className="p-2">Compromiso</th>
+                      <th className="p-2">Validado</th>
+                      <th className="p-2">Cobrable</th>
+                      <th className="p-2">EDP</th>
+                      <th className="p-2">Mes cobro</th>
+                      <th className="p-2">Monto</th>
+                      <th className="p-2">Acciones</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {filteredRows.length === 0 && (
+                      <tr>
+                        <td colSpan="15" className="p-6 text-center text-slate-500">
+                          No hay registros para los filtros actuales.
+                        </td>
+                      </tr>
+                    )}
+
+                    {filteredRows.map((r) => (
+                      <tr key={r.id} className="border-b align-top">
+                        <td className="p-2">
+                          <input
+                            type="date"
+                            value={r.fecha || ""}
+                            onChange={(e) => updateRow(r.id, "fecha", e.target.value)}
+                            className="w-full rounded-lg border border-slate-300 px-2 py-1"
+                          />
+                        </td>
+
+                        <td className="p-2">
+                          <select
+                            value={r.tipo}
+                            onChange={(e) => updateRow(r.id, "tipo", e.target.value)}
+                            className="w-full rounded-lg border border-slate-300 px-2 py-1"
+                          >
+                            {TIPOS.map(x => <option key={x}>{x}</option>)}
+                          </select>
+                        </td>
+
+                        <td className="p-2">
+                          <input
+                            value={r.empresa || ""}
+                            onChange={(e) => updateRow(r.id, "empresa", e.target.value)}
+                            className="w-full rounded-lg border border-slate-300 px-2 py-1"
+                          />
+                        </td>
+
+                        <td className="p-2">
+                          <input
+                            value={r.area || ""}
+                            onChange={(e) => updateRow(r.id, "area", e.target.value)}
+                            className="w-full rounded-lg border border-slate-300 px-2 py-1"
+                          />
+                        </td>
+
+                        <td className="p-2">
+                          <textarea
+                            rows="2"
+                            value={r.descripcion || ""}
+                            onChange={(e) => updateRow(r.id, "descripcion", e.target.value)}
+                            className="w-full rounded-lg border border-slate-300 px-2 py-1"
+                          />
+                        </td>
+
+                        <td className="p-2">
+                          <select
+                            value={r.impacto}
+                            onChange={(e) => updateRow(r.id, "impacto", e.target.value)}
+                            className="w-full rounded-lg border border-slate-300 px-2 py-1"
+                          >
+                            {IMPACTOS.map(x => <option key={x}>{x}</option>)}
+                          </select>
+                        </td>
+
+                        <td className="p-2">
+                          <input
+                            value={r.responsable || ""}
+                            onChange={(e) => updateRow(r.id, "responsable", e.target.value)}
+                            className="w-full rounded-lg border border-slate-300 px-2 py-1"
+                          />
+                        </td>
+
+                        <td className="p-2">
+                          <select
+                            value={r.estado}
+                            onChange={(e) => updateRow(r.id, "estado", e.target.value)}
+                            className="w-full rounded-lg border border-slate-300 px-2 py-1"
+                          >
+                            {ESTADOS.map(x => <option key={x}>{x}</option>)}
+                          </select>
+                        </td>
+
+                        <td className="p-2">
+                          <input
+                            type="date"
+                            value={r.fechaCompromiso || ""}
+                            onChange={(e) => updateRow(r.id, "fechaCompromiso", e.target.value)}
+                            className={
+                              "w-full rounded-lg border px-2 py-1 " +
+                              (r.fechaCompromiso && isPast(r.fechaCompromiso) && r.estado !== "Cerrado"
+                                ? "border-red-300 bg-red-50"
+                                : "border-slate-300")
+                            }
+                          />
+                        </td>
+
+                        <td className="p-2">
+                          <select
+                            value={r.validado}
+                            onChange={(e) => updateRow(r.id, "validado", e.target.value)}
+                            className="w-full rounded-lg border border-slate-300 px-2 py-1"
+                          >
+                            <option>No</option>
+                            <option>Sí</option>
+                          </select>
+                        </td>
+
+                        <td className="p-2">
+                          <select
+                            value={r.cobrable}
+                            onChange={(e) => updateRow(r.id, "cobrable", e.target.value)}
+                            className="w-full rounded-lg border border-slate-300 px-2 py-1"
+                          >
+                            <option>Sí</option>
+                            <option>No</option>
+                          </select>
+                        </td>
+
+                        <td className="p-2">
+                          <select
+                            value={r.pasadoEDP}
+                            onChange={(e) => updateRow(r.id, "pasadoEDP", e.target.value)}
+                            className="w-full rounded-lg border border-slate-300 px-2 py-1"
+                          >
+                            <option>No</option>
+                            <option>Sí</option>
+                          </select>
+                        </td>
+
+                        <td className="p-2">
+                          <input
+                            type="month"
+                            value={r.mesCobro || ""}
+                            onChange={(e) => updateRow(r.id, "mesCobro", e.target.value)}
+                            className="w-full rounded-lg border border-slate-300 px-2 py-1"
+                          />
+                        </td>
+
+                        <td className="p-2">
+                          <input
+                            type="number"
+                            value={r.montoEstimado ?? ""}
+                            onChange={(e) => updateRow(r.id, "montoEstimado", e.target.value === "" ? "" : Number(e.target.value))}
+                            className="w-full rounded-lg border border-slate-300 px-2 py-1"
+                          />
+                          <div className="mt-1 text-xs text-slate-500">
+                            {r.montoEstimado ? formatCLP(r.montoEstimado) : ""}
+                          </div>
+                        </td>
+
+                        <td className="p-2">
+                          <div className="flex flex-col gap-2">
+                            <button
+                              onClick={() => updateRow(r.id, "validado", "Sí")}
+                              className="rounded-lg bg-amber-100 px-2 py-1 text-left text-amber-900 hover:bg-amber-200"
+                            >
+                              Marcar validado
+                            </button>
+
+                            <button
+                              onClick={() => {
+                                updateRow(r.id, "estado", "Ejecutado");
+                                updateRow(r.id, "pasadoEDP", "No");
+                              }}
+                              className="rounded-lg bg-sky-100 px-2 py-1 text-left text-sky-900 hover:bg-sky-200"
+                            >
+                              Marcar ejecutado
+                            </button>
+
+                            <button
+                              onClick={() => updateRow(r.id, "pasadoEDP", "Sí")}
+                              className="rounded-lg bg-green-100 px-2 py-1 text-left text-green-900 hover:bg-green-200"
+                            >
+                              Pasar a EDP
+                            </button>
+
+                            <button
+                              onClick={() => deleteRow(r.id)}
+                              className="rounded-lg bg-red-100 px-2 py-1 text-left text-red-900 hover:bg-red-200"
+                            >
+                              Eliminar
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
